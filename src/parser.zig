@@ -93,6 +93,8 @@ pub const TableTag = enum(u32) {
 pub const ParsedTables = struct {
     const Self = @This();
     head: ?table.head.Table = null,
+    hhea: ?table.hhea.Table = null,
+    maxp: ?table.maxp.Table = null,
 
     pub inline fn is_parsed(self: *Self, tag: TableTag) bool {
         return switch (tag) {
@@ -175,9 +177,9 @@ pub const Parser = struct {
     fn parse_table(self: *Self, tag: TableTag, record: TableRecord) !void {
         try self.reader.seek_to(record.offset);
         switch (tag) {
-            .head => {
-                self.parsed_tables.head = try table.head.Table.parse(&self.reader);
-            },
+            .head => self.parsed_tables.head = try table.head.Table.parse(&self.reader),
+            .hhea => self.parsed_tables.hhea = try table.hhea.Table.parse(&self.reader),
+            .maxp => self.parsed_tables.maxp = try table.maxp.Table.parse(&self.reader),
             else => {
                 // TODO: Implement parsing for other tables
             },
