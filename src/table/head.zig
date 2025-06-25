@@ -1,6 +1,37 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
 
+pub const Flags = packed struct {};
+
+pub const MacStyle = packed struct {
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    outline: bool,
+    shadow: bool,
+    condensed: bool,
+    extended: bool,
+    reserved: u9,
+
+    pub fn is_bold(self: MacStyle) bool {
+        return self.bold;
+    }
+    pub fn is_italic(self: MacStyle) bool {
+        return self.italic;
+    }
+    pub fn has_any_style(self: MacStyle) bool {
+        return self.bold or self.italic or self.underline or
+            self.outline or self.shadow or self.condensed or self.extended;
+    }
+    pub fn to_u16(self: MacStyle) u16 {
+        return @bitCast(self);
+    }
+
+    pub fn from_u16(value: u16) MacStyle {
+        return @bitCast(value);
+    }
+};
+
 pub const Table = struct {
     const Self = @This();
     major_version: u16,
@@ -16,13 +47,20 @@ pub const Table = struct {
     y_min: i16,
     x_max: i16,
     y_max: i16,
-    mac_style: u16,
+    mac_style: MacStyle,
     lowest_rec_ppem: u16,
     font_direction_hint: i16,
     index_to_loc_format: i16,
     glyph_data_format: i16,
 
+    const Error = error{
+        InvalidHeadTable,
+    };
+
     pub fn parse(byte_reader: *reader.ByteReader) !Self {
+        if (byte_reader.buffer.len < 54) {
+            return error.InvalidHeadTable;
+        }
         const major_version = try byte_reader.read_u16_be();
         const minor_version = try byte_reader.read_u16_be();
         const font_revision = try byte_reader.read_u32_be();
@@ -56,7 +94,7 @@ pub const Table = struct {
             .y_min = y_min,
             .x_max = x_max,
             .y_max = y_max,
-            .mac_style = mac_style,
+            .mac_style = MacStyle.from_u16(mac_style),
             .lowest_rec_ppem = lowest_rec_ppem,
             .font_direction_hint = font_direction_hint,
             .index_to_loc_format = index_to_loc_format,
@@ -64,3 +102,74 @@ pub const Table = struct {
         };
     }
 };
+
+test "MacStyle Parsing" {
+    const style = MacStyle{
+        .bold = true,
+        .italic = false,
+        .underline = true,
+        .outline = false,
+        .shadow = false,
+        .condensed = false,
+        .extended = false,
+        .reserved = 0,
+    };
+    try std.testing.expect(@sizeOf(MacStyle) == 2);
+    try std.testing.expect(style.is_bold() == true);
+    try std.testing.expect(style.is_italic() == false);
+    try std.testing.expect(style.has_any_style() == true);
+    const style_u16 = style.to_u16();
+    const parsed_style = MacStyle.from_u16(style_u16);
+    try std.testing.expect(parsed_style.is_bold() == true);
+    try std.testing.expect(parsed_style.is_italic() == false);
+}
+
+test "Head Table Parsing" {
+    const head_buffer = &[_]u8{
+        0x00, 0x01, // major_version 1.0
+        0x00, 0x00, // minor_version 0.0
+        0x00, 0x01, 0x00, 0x41, // font_revision 1.001
+        0xB1, 0xB0, 0xAF, 0xBA, // checksum_adjustment
+        0x5F, 0x0F, 0x3C, 0xF5, // magic_number
+        0x00, 0x11, // flags
+        0x03, 0xE8, // units_per_em 1000
+        0x00, 0x00, 0x01, 0x8C, 0x22, 0x0C, 0xA0, 0x00, // timestamp created (2025-6-25)
+        0x00, 0x00, 0x01, 0x8C, 0x22, 0x0C, 0xA0, 0x00, // timestamp modified
+        0xFF, 0xCE, // x_min -50
+        0xFF, 0x38, // y_min -200
+        0x00, 0x32, // x_max 50
+        0x00, 0xC8, // y_max 200
+        0x00, 0x03, // mac_style (bold, .italic)
+        0x00, 0x08, // lowest_rec_ppem 8
+        0x00, 0x02, // font_direction_hint 2
+        0x00, 0x00, // index_to_loc_format 0
+        0x00, 0x00, // glyph_data_format 0
+    };
+    var byte_reader = reader.ByteReader.init(head_buffer);
+    const table = try Table.parse(&byte_reader);
+
+    try std.testing.expect(table.major_version == 1);
+    try std.testing.expect(table.minor_version == 0);
+    try std.testing.expect(table.font_revision == 0x00010041);
+    try std.testing.expect(table.checksum_adjustment == 0xB1B0AFBA);
+    try std.testing.expect(table.magic_number == 0x5F0F3CF5);
+    try std.testing.expect(table.flags == 0x0011);
+    try std.testing.expect(table.units_per_em == 1000);
+    try std.testing.expect(table.x_min == -50);
+    try std.testing.expect(table.y_min == -200);
+    try std.testing.expect(table.x_max == 50);
+    try std.testing.expect(table.y_max == 200);
+    try std.testing.expect(table.lowest_rec_ppem == 8);
+    try std.testing.expect(table.font_direction_hint == 2);
+    try std.testing.expect(table.index_to_loc_format == 0);
+
+    try std.testing.expect(table.created == 1701378301952);
+    try std.testing.expect(table.modified == 0x18C220CA000);
+
+    try std.testing.expect(table.glyph_data_format == 0);
+
+    try std.testing.expect(table.mac_style.is_bold());
+    try std.testing.expect(table.mac_style.is_italic());
+    try std.testing.expect(!table.mac_style.underline);
+    try std.testing.expect(table.mac_style.has_any_style());
+}
