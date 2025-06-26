@@ -97,6 +97,7 @@ pub const ParsedTables = struct {
     hhea: ?Table = null,
     maxp: ?Table = null,
     os2: ?Table = null,
+    post: ?Table = null,
 
     pub inline fn is_parsed(self: *Self, tag: TableTag) bool {
         return switch (tag) {
@@ -104,6 +105,7 @@ pub const ParsedTables = struct {
             .hhea => self.hhea != null,
             .maxp => self.maxp != null,
             .os2 => self.os2 != null,
+            .post => self.post != null,
             else => false,
         };
     }
@@ -112,6 +114,8 @@ pub const ParsedTables = struct {
         if (self.head) |head| head.deinit();
         if (self.hhea) |hhea| hhea.deinit();
         if (self.maxp) |maxp| maxp.deinit();
+        if (self.os2) |os2| os2.deinit();
+        if (self.post) |post| post.deinit();
     }
     pub fn get_head(self: *const Self) ?*table.head.HeadTable {
         if (self.head) |head_table| {
@@ -229,6 +233,11 @@ pub const Parser = struct {
                 var os2_table = try table.os2.init(self.allocator, &self.reader);
                 try os2_table.parse();
                 self.parsed_tables.os2 = os2_table;
+            },
+            .post => {
+                var post_table = try table.post.init(self.allocator, &self.reader);
+                try post_table.parse();
+                self.parsed_tables.post = post_table;
             },
             else => {
                 // TODO: Implement parsing for other tables
