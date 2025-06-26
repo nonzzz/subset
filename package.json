@@ -1,0 +1,20 @@
+{
+  "name": "ttf.zig",
+  "version": "1.0.0",
+  "description": "A tool to extract ttf/otf subsets.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Kanno",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.0.4",
+    "dprint": "^0.50.0",
+    "eslint": "^9.29.0",
+    "eslint-config-kagura": "^3.0.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}
