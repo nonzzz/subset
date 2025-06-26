@@ -1,8 +1,14 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
+const Table = @import("../table.zig");
 
-pub const Table = struct {
+const Allocator = std.mem.Allocator;
+
+pub const HheaTable = struct {
     const Self = @This();
+
+    allocator: Allocator,
+    byte_reader: *reader.ByteReader,
 
     major_version: u16,
     minor_version: u16,
@@ -27,54 +33,57 @@ pub const Table = struct {
         InvalidHheaTable,
     };
 
-    pub fn parse(byte_reader: *reader.ByteReader) !Self {
-        if (byte_reader.buffer.len < 36) {
+    pub fn parse(ptr: *anyopaque) anyerror!void {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        if (self.byte_reader.buffer.len < 36) {
             return Error.InvalidHheaTable;
         }
 
-        const major_version = try byte_reader.read_u16_be();
-        const minor_version = try byte_reader.read_u16_be();
-        const ascender = try byte_reader.read_i16_be();
-        const descender = try byte_reader.read_i16_be();
-        const line_gap = try byte_reader.read_i16_be();
-        const advance_width_max = try byte_reader.read_u16_be();
-        const min_left_side_bearing = try byte_reader.read_i16_be();
-        const min_right_side_bearing = try byte_reader.read_i16_be();
-        const x_max_extent = try byte_reader.read_i16_be();
-        const caret_slope_rise = try byte_reader.read_i16_be();
-        const caret_slope_run = try byte_reader.read_i16_be();
-        const caret_offset = try byte_reader.read_i16_be();
+        self.major_version = try self.byte_reader.read_u16_be();
+        self.minor_version = try self.byte_reader.read_u16_be();
+        self.ascender = try self.byte_reader.read_i16_be();
+        self.descender = try self.byte_reader.read_i16_be();
+        self.line_gap = try self.byte_reader.read_i16_be();
+        self.advance_width_max = try self.byte_reader.read_u16_be();
+        self.min_left_side_bearing = try self.byte_reader.read_i16_be();
+        self.min_right_side_bearing = try self.byte_reader.read_i16_be();
+        self.x_max_extent = try self.byte_reader.read_i16_be();
+        self.caret_slope_rise = try self.byte_reader.read_i16_be();
+        self.caret_slope_run = try self.byte_reader.read_i16_be();
+        self.caret_offset = try self.byte_reader.read_i16_be();
 
-        const reserved1 = try byte_reader.read_i16_be();
-        const reserved2 = try byte_reader.read_i16_be();
-        const reserved3 = try byte_reader.read_i16_be();
-        const reserved4 = try byte_reader.read_i16_be();
+        self.reserved1 = try self.byte_reader.read_i16_be();
+        self.reserved2 = try self.byte_reader.read_i16_be();
+        self.reserved3 = try self.byte_reader.read_i16_be();
+        self.reserved4 = try self.byte_reader.read_i16_be();
 
-        const metric_data_format = try byte_reader.read_i16_be();
-        const number_of_hmetrics = try byte_reader.read_u16_be();
+        self.metric_data_format = try self.byte_reader.read_i16_be();
+        self.number_of_hmetrics = try self.byte_reader.read_u16_be();
+    }
 
-        return Self{
-            .major_version = major_version,
-            .minor_version = minor_version,
-            .ascender = ascender,
-            .descender = descender,
-            .line_gap = line_gap,
-            .advance_width_max = advance_width_max,
-            .min_left_side_bearing = min_left_side_bearing,
-            .min_right_side_bearing = min_right_side_bearing,
-            .x_max_extent = x_max_extent,
-            .caret_slope_rise = caret_slope_rise,
-            .caret_slope_run = caret_slope_run,
-            .caret_offset = caret_offset,
-            .reserved1 = reserved1,
-            .reserved2 = reserved2,
-            .reserved3 = reserved3,
-            .reserved4 = reserved4,
-            .metric_data_format = metric_data_format,
-            .number_of_hmetrics = number_of_hmetrics,
+    fn deinit(ptr: *anyopaque) void {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        self.allocator.destroy(self);
+    }
+
+    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+        const self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
+
+        self.* = undefined;
+        self.allocator = allocator;
+        self.byte_reader = byte_reader;
+
+        return Table{
+            .ptr = self,
+            .vtable = &.{ .parse = parse, .deinit = deinit },
         };
     }
 };
+
+pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+    return HheaTable.init(allocator, byte_reader);
+}
 
 test "Hhea Table Parsing" {
     const hhea_buffer = &[_]u8{
@@ -98,7 +107,11 @@ test "Hhea Table Parsing" {
         0x00, 0x02, // number_of_hmetrics
     };
     var byte_reader = reader.ByteReader.init(hhea_buffer);
-    const hhea_table = try Table.parse(&byte_reader);
+    var table = try HheaTable.init(std.testing.allocator, &byte_reader);
+    defer table.deinit();
+    try table.parse();
+    const hhea_table = table.cast(HheaTable);
+
     try std.testing.expect(hhea_table.major_version == 1);
     try std.testing.expect(hhea_table.minor_version == 0);
     try std.testing.expect(hhea_table.ascender == 32);
