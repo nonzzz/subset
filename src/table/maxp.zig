@@ -1,10 +1,16 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
+const Table = @import("../table.zig");
+
+const Allocator = std.mem.Allocator;
 
 // CFF or CFF2 must using version0.5. TTF must using version 1.0
 
-pub const Table = struct {
+pub const MaxpTable = struct {
     const Self = @This();
+
+    allocator: Allocator,
+    byte_reader: *reader.ByteReader,
 
     version: u32,
     num_glyphs: u16,
@@ -28,46 +34,68 @@ pub const Table = struct {
         InvalidMaxpVersion,
     };
 
-    pub fn parse(byte_reader: *reader.ByteReader) !Self {
-        const version = try byte_reader.read_u32_be();
-        const num_glyphs = try byte_reader.read_u16_be();
+    fn parse(ptr: *anyopaque) anyerror!void {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        const version = try self.byte_reader.read_u32_be();
+        const num_glyphs = try self.byte_reader.read_u16_be();
 
-        var table = Self{
-            .version = version,
-            .num_glyphs = num_glyphs,
-        };
+        self.version = version;
+        self.num_glyphs = num_glyphs;
 
         switch (version) {
             0x00005000 => {},
             0x00010000 => {
-                table.max_points = try byte_reader.read_u16_be();
-                table.max_contours = try byte_reader.read_u16_be();
-                table.max_composite_points = try byte_reader.read_u16_be();
-                table.max_composite_contours = try byte_reader.read_u16_be();
-                table.max_zones = try byte_reader.read_u16_be();
-                table.max_twilight_points = try byte_reader.read_u16_be();
-                table.max_storage = try byte_reader.read_u16_be();
-                table.max_function_defs = try byte_reader.read_u16_be();
-                table.max_instruction_defs = try byte_reader.read_u16_be();
-                table.max_stack_elements = try byte_reader.read_u16_be();
-                table.max_size_of_instructions = try byte_reader.read_u16_be();
-                table.max_component_elements = try byte_reader.read_u16_be();
-                table.max_component_depth = try byte_reader.read_u16_be();
+                self.max_points = try self.byte_reader.read_u16_be();
+                self.max_contours = try self.byte_reader.read_u16_be();
+                self.max_composite_points = try self.byte_reader.read_u16_be();
+                self.max_composite_contours = try self.byte_reader.read_u16_be();
+                self.max_zones = try self.byte_reader.read_u16_be();
+                self.max_twilight_points = try self.byte_reader.read_u16_be();
+                self.max_storage = try self.byte_reader.read_u16_be();
+                self.max_function_defs = try self.byte_reader.read_u16_be();
+                self.max_instruction_defs = try self.byte_reader.read_u16_be();
+                self.max_stack_elements = try self.byte_reader.read_u16_be();
+                self.max_size_of_instructions = try self.byte_reader.read_u16_be();
+                self.max_component_elements = try self.byte_reader.read_u16_be();
+                self.max_component_depth = try self.byte_reader.read_u16_be();
             },
             else => {
                 return error.InvalidMaxpVersion;
             },
         }
-        return table;
     }
-    pub fn is_ttf(self: *const Self) bool {
+
+    pub fn is_ttf(self: *Self) bool {
         return self.version == 0x00010000;
     }
 
-    pub fn is_cff(self: *const Self) bool {
+    pub fn is_cff(self: *Self) bool {
         return self.version == 0x00005000;
     }
+
+    fn deinit(ptr: *anyopaque) void {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        self.allocator.destroy(self);
+    }
+
+    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+        const self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
+
+        self.* = undefined;
+        self.allocator = allocator;
+        self.byte_reader = byte_reader;
+
+        return Table{
+            .ptr = self,
+            .vtable = &.{ .parse = parse, .deinit = deinit },
+        };
+    }
 };
+
+pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+    return MaxpTable.init(allocator, byte_reader);
+}
 
 test "parse maxp table version 0.5" {
     const buffer = &[_]u8{
@@ -75,9 +103,15 @@ test "parse maxp table version 0.5" {
         0x00, 0x01, // num_glyphs = 1
     };
     var byte_reader = reader.ByteReader.init(buffer);
-    const table = try Table.parse(&byte_reader);
-    try std.testing.expect(table.version == 0x00005000);
-    try std.testing.expect(table.num_glyphs == 1);
+
+    var table = try MaxpTable.init(std.testing.allocator, &byte_reader);
+    defer table.deinit();
+    try table.parse();
+
+    var maxp_data = table.cast(MaxpTable);
+    try std.testing.expect(maxp_data.version == 0x00005000);
+    try std.testing.expect(maxp_data.num_glyphs == 1);
+    try std.testing.expect(maxp_data.is_cff());
 }
 
 test "parse maxp table version 1.0" {
@@ -99,8 +133,11 @@ test "parse maxp table version 1.0" {
         0x00, 0x03, // max_component_depth
     };
     var byte_reader = reader.ByteReader.init(buffer);
-    const table = try Table.parse(&byte_reader);
-    try std.testing.expect(table.version == 0x00010000);
-    try std.testing.expect(table.num_glyphs == 2);
-    try std.testing.expect(table.max_points.? == 16);
+    var table = try MaxpTable.init(std.testing.allocator, &byte_reader);
+    defer table.deinit();
+    try table.parse();
+    const maxp_table = table.cast(MaxpTable);
+    try std.testing.expect(maxp_table.version == 0x00010000);
+    try std.testing.expect(maxp_table.num_glyphs == 2);
+    try std.testing.expect(maxp_table.max_points.? == 16);
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const reader = @import("./byte_read.zig");
 const table = @import("./table/mod.zig");
+const Table = @import("./table.zig");
 
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
@@ -92,15 +93,43 @@ pub const TableTag = enum(u32) {
 
 pub const ParsedTables = struct {
     const Self = @This();
-    head: ?table.head.Table = null,
-    hhea: ?table.hhea.Table = null,
-    maxp: ?table.maxp.Table = null,
+    head: ?Table = null,
+    hhea: ?Table = null,
+    maxp: ?Table = null,
 
     pub inline fn is_parsed(self: *Self, tag: TableTag) bool {
         return switch (tag) {
             .head => self.head != null,
+            .hhea => self.hhea != null,
+            .maxp => self.maxp != null,
             else => false,
         };
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self.head) |head| head.deinit();
+        if (self.hhea) |hhea| hhea.deinit();
+        if (self.maxp) |maxp| maxp.deinit();
+    }
+    pub fn get_head(self: *const Self) ?*table.head.HeadTable {
+        if (self.head) |head_table| {
+            return head_table.cast(table.head.HeadTable);
+        }
+        return null;
+    }
+
+    pub fn get_hhea(self: *const Self) ?*table.hhea.HheaTable {
+        if (self.hhea) |hhea_table| {
+            return hhea_table.cast(table.hhea.HheaTable);
+        }
+        return null;
+    }
+
+    pub fn get_maxp(self: *const Self) ?*table.maxp.MaxpTable {
+        if (self.maxp) |maxp_table| {
+            return maxp_table.cast(table.maxp.MaxpTable);
+        }
+        return null;
     }
 };
 
@@ -141,6 +170,7 @@ pub const Parser = struct {
 
     pub fn deinit(self: *Self) void {
         self.table_records.deinit();
+        self.parsed_tables.deinit();
     }
 
     pub fn parse(self: *Self) !void {
@@ -176,10 +206,23 @@ pub const Parser = struct {
 
     fn parse_table(self: *Self, tag: TableTag, record: TableRecord) !void {
         try self.reader.seek_to(record.offset);
+
         switch (tag) {
-            .head => self.parsed_tables.head = try table.head.Table.parse(&self.reader),
-            .hhea => self.parsed_tables.hhea = try table.hhea.Table.parse(&self.reader),
-            .maxp => self.parsed_tables.maxp = try table.maxp.Table.parse(&self.reader),
+            .head => {
+                var head_table = try table.head.init(self.allocator, &self.reader);
+                try head_table.parse();
+                self.parsed_tables.head = head_table;
+            },
+            .hhea => {
+                var hhea_table = try table.hhea.init(self.allocator, &self.reader);
+                try hhea_table.parse();
+                self.parsed_tables.hhea = hhea_table;
+            },
+            .maxp => {
+                var maxp_table = try table.maxp.init(self.allocator, &self.reader);
+                try maxp_table.parse();
+                self.parsed_tables.maxp = maxp_table;
+            },
             else => {
                 // TODO: Implement parsing for other tables
             },
@@ -232,4 +275,22 @@ test "Parser" {
     var parser = try Parser.init(allocator, file_content);
     defer parser.deinit();
     try parser.parse();
+
+    if (parser.parsed_tables.get_head()) |head_data| {
+        std.debug.print("Head table version: {}.{}\n", .{ head_data.major_version, head_data.minor_version });
+        std.debug.print("Units per EM: {}\n", .{head_data.units_per_em});
+    }
+
+    if (parser.parsed_tables.get_maxp()) |maxp_data| {
+        std.debug.print("MAXP version: 0x{X}\n", .{maxp_data.version});
+        std.debug.print("Number of glyphs: {}\n", .{maxp_data.num_glyphs});
+        std.debug.print("Is TTF: {}\n", .{maxp_data.is_ttf()});
+        std.debug.print("Is CFF: {}\n", .{maxp_data.is_cff()});
+    }
+
+    if (parser.parsed_tables.get_hhea()) |hhea_data| {
+        std.debug.print("HHEA ascender: {}\n", .{hhea_data.ascender});
+        std.debug.print("HHEA descender: {}\n", .{hhea_data.descender});
+        std.debug.print("Number of HMetrics: {}\n", .{hhea_data.number_of_hmetrics});
+    }
 }

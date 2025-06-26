@@ -3,3 +3,9 @@
 pub const head = @import("./head.zig");
 pub const hhea = @import("./hhea.zig");
 pub const maxp = @import("./maxp.zig");
+
+test {
+    _ = head;
+    _ = hhea;
+    _ = maxp;
+}
