@@ -4,6 +4,7 @@ const Table = @import("../table.zig");
 
 const Allocator = std.mem.Allocator;
 
+// https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6post.html
 const STANDARD_NAMES = [_][]const u8{
     ".notdef",       ".null",         "nonmarkingreturn", "space",          "exclam",           "quotedbl",
     "numbersign",    "dollar",        "percent",          "ampersand",      "quotesingle",      "parenleft",
@@ -66,36 +67,37 @@ pub const PostTable = struct {
     min_mem_type1: u32,
     max_mem_type1: u32,
 
-    // v2_data: ?V2 = null,
+    v2_data: ?V2 = null,
 
-    // const V2 = struct {
-    //     num_glyphs: u16,
-    //     glyph_name_index: []u16,
-    //     string_data: []u8,
+    const V2 = struct {
+        num_glyphs: u16,
+        glyph_name_index: []u16,
+        string_data: []u8,
 
-    //     pub fn deinit(self: *V2, allocator: Allocator) void {
-    //         allocator.free(self.glyph_name_index);
-    //         allocator.free(self.string_data);
-    //     }
+        fn deinit(self: *V2, allocator: Allocator) void {
+            allocator.free(self.glyph_name_index);
+            if (self.string_data.len > 0) {
+                allocator.free(self.string_data);
+            }
+        }
+        fn get_name(self: *const V2, custom_index: u16) ?[]const u8 {
+            var offset: usize = 0;
+            var current_index: u16 = 0;
 
-    //     pub fn get_name(self: *const V2, custom_index: u16) ?[]const u8 {
-    //         var offset: usize = 0;
-    //         var current_index: u16 = 0;
+            while (offset < self.string_data.len and current_index < custom_index) {
+                const length = self.string_data[offset];
+                offset += 1 + length;
+                current_index += 1;
+            }
 
-    //         while (offset < self.string_data.len and current_index < custom_index) {
-    //             const length = self.string_data[offset];
-    //             offset += 1 + length;
-    //             current_index += 1;
-    //         }
+            if (offset >= self.string_data.len) return null;
 
-    //         if (offset >= self.string_data.len) return null;
+            const length = self.string_data[offset];
+            if (offset + 1 + length > self.string_data.len) return null;
 
-    //         const length = self.string_data[offset];
-    //         if (offset + 1 + length > self.string_data.len) return null;
-
-    //         return self.string_data[offset + 1 .. offset + 1 + length];
-    //     }
-    // };
+            return self.string_data[offset + 1 .. offset + 1 + length];
+        }
+    };
 
     const Error = error{
         InvalidPostVersion,
@@ -119,7 +121,7 @@ pub const PostTable = struct {
         switch (self.version) {
             0x00010000, 0x00030000 => {},
             0x00020000 => {
-                // try self.parse_v2();
+                self.v2_data = try self.parse_v2();
             },
             0x00025000 => {
                 return Error.DeprecatedPostVersion25;
@@ -130,51 +132,55 @@ pub const PostTable = struct {
         }
     }
 
-    // fn parse_v2(self: *Self) !void {
-    //     const num_glyphs = try self.byte_reader.read_u16_be();
+    fn parse_v2(self: *Self) !V2 {
+        const num_glyphs = try self.byte_reader.read_u16_be();
+        const glyph_name_index = try self.allocator.alloc(u16, num_glyphs);
+        errdefer self.allocator.free(glyph_name_index);
+        for (glyph_name_index) |*index| {
+            index.* = try self.byte_reader.read_u16_be();
+        }
 
-    //     const glyph_name_index = try self.allocator.alloc(u16, num_glyphs);
-    //     errdefer self.allocator.free(glyph_name_index);
+        // glyph name index range is 0-257 standard macintosh names,
+        // otherwise its a custom name index starting from 258 to 65535
+        var max_custom_index: u16 = 0;
+        var has_custom_names = false;
+        for (glyph_name_index) |index| {
+            if (index >= 258) {
+                const custom_index = index - 258;
+                max_custom_index = @max(max_custom_index, custom_index);
+                has_custom_names = true;
+            }
+        }
 
-    //     for (glyph_name_index) |*index| {
-    //         index.* = try self.byte_reader.read_u16_be();
-    //     }
+        var string_data: []u8 = &.{};
 
-    //     var max_custom_index: u16 = 0;
-    //     for (glyph_name_index) |index| {
-    //         if (index >= 258) {
-    //             const custom_index = index - 258;
-    //             if (custom_index > max_custom_index) {
-    //                 max_custom_index = custom_index;
-    //             }
-    //         }
-    //     }
+        if (has_custom_names) {
+            var string_list = std.ArrayList(u8).init(self.allocator);
+            errdefer string_list.deinit();
+            var custom_strings_read: u16 = 0;
+            while (custom_strings_read <= max_custom_index) {
+                const string_length = try self.byte_reader.read_u8();
+                const string_bytes = try self.byte_reader.read_bytes(string_length);
 
-    //     var string_data = std.ArrayList(u8).init(self.allocator);
-    //     errdefer string_data.deinit();
+                try string_list.append(string_length);
+                try string_list.appendSlice(string_bytes);
+                custom_strings_read += 1;
+            }
+            string_data = try string_list.toOwnedSlice();
+        }
 
-    //     var custom_strings_read: u16 = 0;
-    //     while (custom_strings_read <= max_custom_index) {
-    //         const string_length = try self.byte_reader.read_u8();
-
-    //         const string_bytes = try self.byte_reader.read_bytes(string_length);
-
-    //         try string_data.appendSlice(string_bytes);
-    //         custom_strings_read += 1;
-    //     }
-
-    //     self.v2_data = V2{
-    //         .num_glyphs = num_glyphs,
-    //         .glyph_name_index = glyph_name_index,
-    //         .string_data = try string_data.toOwnedSlice(),
-    //     };
-    // }
+        return V2{
+            .num_glyphs = num_glyphs,
+            .glyph_name_index = glyph_name_index,
+            .string_data = string_data,
+        };
+    }
 
     fn deinit(ptr: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(ptr));
-        // if (self.v2_data) |*v2| {
-        //     v2.deinit(self.allocator);
-        // }
+        if (self.v2_data) |*v2| {
+            v2.deinit(self.allocator);
+        }
         self.allocator.destroy(self);
     }
 
@@ -185,6 +191,7 @@ pub const PostTable = struct {
         self.* = undefined;
         self.allocator = allocator;
         self.byte_reader = byte_reader;
+        self.v2_data = null;
 
         return Table{
             .ptr = self,
@@ -217,9 +224,7 @@ pub const PostTable = struct {
     }
 
     pub fn get_num_glyphs(self: *Self) ?u16 {
-        // return if (self.v2_data) |v2| v2.num_glyphs else null;
-        _ = self; // Placeholder for future use
-        return null; // Version 1.0 does not have num_glyphs
+        return if (self.v2_data) |v2| v2.num_glyphs else null;
     }
 
     pub fn get_glyph_name(self: *Self, glyph_id: u16) ?[]const u8 {
@@ -231,17 +236,17 @@ pub const PostTable = struct {
                 return null;
             },
             0x00020000 => {
-                // if (self.v2_data) |v2| {
-                //     if (glyph_id >= v2.num_glyphs) return null;
+                if (self.v2_data) |v2| {
+                    if (glyph_id >= v2.num_glyphs) return null;
 
-                //     const name_index = v2.glyph_name_index[glyph_id];
-                //     if (name_index < 258) {
-                //         return STANDARD_NAMES[name_index];
-                //     } else {
-                //         const custom_index = name_index - 258;
-                //         return v2.get_name(custom_index);
-                //     }
-                // }
+                    const name_index = v2.glyph_name_index[glyph_id];
+                    if (name_index < 258) {
+                        return STANDARD_NAMES[name_index];
+                    } else {
+                        const custom_index = name_index - 258;
+                        return v2.get_name(custom_index);
+                    }
+                }
                 return null;
             },
             else => return null,
@@ -288,11 +293,67 @@ test "parse post table v1.0" {
     try std.testing.expectEqual(@as(i16, 50), post_table.get_underline_thickness());
     try std.testing.expect(!post_table.is_monospace());
     try std.testing.expect(post_table.has_glyph_names());
-    if (post_table.get_glyph_name(0)) |name| {
-        try std.testing.expect(std.mem.eql(u8, name, ".notdef"));
-    } else {
-        try std.testing.expect(false);
-    }
+
+    try std.testing.expectEqualSlices(u8, ".notdef", post_table.get_glyph_name(0).?);
+}
+
+test "parse post table v2.0" {
+    const allocator = std.testing.allocator;
+    const buffer = &[_]u8{
+        // Version 2.0
+        0x00, 0x02, 0x00, 0x00,
+        // italicAngle (Fixed 16.16) = 0
+        0x00, 0x00, 0x00, 0x00,
+        // underlinePosition = -100
+        0xFF, 0x9C,
+        // underlineThickness = 50
+        0x00, 0x32,
+        // isFixedPitch = 0 (proportional)
+        0x00, 0x00, 0x00, 0x00,
+        // minMemType42 = 0
+        0x00, 0x00, 0x00, 0x00,
+        // maxMemType42 = 0
+        0x00, 0x00, 0x00, 0x00,
+        // minMemType1 = 0
+        0x00, 0x00, 0x00, 0x00,
+        // maxMemType1 = 0
+        0x00, 0x00, 0x00, 0x00,
+
+        // numberOfGlyphs = 4 (reduced from 5)
+        0x00,
+        0x04,
+
+        // glyphNameIndex array (4 entries, removed custom2)
+        0x00, 0x00, // 0 (.notdef)
+        0x00, 0x03, // 3 (space)
+        0x00, 0x24, // 36 (A)
+        0x01, 0x02, // 258 (custom name index 0)
+
+        // Custom string data (Pascal strings)
+        // "custom1" (index 0, 258)
+        0x07, 0x63,
+        0x75, 0x73,
+        0x74, 0x6F,
+        0x6D, 0x31,
+    };
+
+    var byte_reader = reader.ByteReader.init(buffer);
+    var table = try PostTable.init(allocator, &byte_reader);
+    defer table.deinit();
+
+    try table.parse();
+    const post_table = table.cast(PostTable);
+
+    try std.testing.expectEqual(@as(u32, 0x00020000), post_table.get_version());
+    try std.testing.expectEqual(@as(i16, -100), post_table.get_underline_position());
+    try std.testing.expectEqual(@as(i16, 50), post_table.get_underline_thickness());
+    try std.testing.expectEqual(post_table.is_monospace(), false);
+    try std.testing.expect(post_table.has_glyph_names());
+    try std.testing.expectEqualSlices(u8, ".notdef", post_table.get_glyph_name(0).?);
+    try std.testing.expectEqualSlices(u8, "space", post_table.get_glyph_name(1).?);
+    try std.testing.expectEqualSlices(u8, "A", post_table.get_glyph_name(2).?);
+    try std.testing.expectEqualSlices(u8, "custom1", post_table.get_glyph_name(3).?);
+    try std.testing.expect(post_table.get_glyph_name(4) == null);
 }
 
 test "parse post table v2.5 deprecated" {

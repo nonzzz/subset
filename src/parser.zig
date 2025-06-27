@@ -98,6 +98,7 @@ pub const ParsedTables = struct {
     maxp: ?Table = null,
     os2: ?Table = null,
     post: ?Table = null,
+    name: ?Table = null,
 
     pub inline fn is_parsed(self: *Self, tag: TableTag) bool {
         return switch (tag) {
@@ -106,17 +107,21 @@ pub const ParsedTables = struct {
             .maxp => self.maxp != null,
             .os2 => self.os2 != null,
             .post => self.post != null,
+            .name => self.name != null,
             else => false,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.head) |head| head.deinit();
-        if (self.hhea) |hhea| hhea.deinit();
-        if (self.maxp) |maxp| maxp.deinit();
-        if (self.os2) |os2| os2.deinit();
-        if (self.post) |post| post.deinit();
+        inline for (std.meta.fields(Self)) |field| {
+            if (field.type == ?Table) {
+                if (@field(self, field.name)) |tab| {
+                    tab.deinit();
+                }
+            }
+        }
     }
+
     pub fn get_head(self: *const Self) ?*table.head.HeadTable {
         if (self.head) |head_table| {
             return head_table.cast(table.head.HeadTable);
@@ -134,6 +139,26 @@ pub const ParsedTables = struct {
     pub fn get_maxp(self: *const Self) ?*table.maxp.MaxpTable {
         if (self.maxp) |maxp_table| {
             return maxp_table.cast(table.maxp.MaxpTable);
+        }
+        return null;
+    }
+
+    pub fn get_os2(self: *const Self) ?*table.os2.Os2Table {
+        if (self.os2) |os2_table| {
+            return os2_table.cast(table.os2.Os2Table);
+        }
+        return null;
+    }
+    pub fn get_post(self: *const Self) ?*table.post.PostTable {
+        if (self.post) |post_table| {
+            return post_table.cast(table.post.PostTable);
+        }
+        return null;
+    }
+
+    pub fn get_name(self: *const Self) ?*table.name.NameTable {
+        if (self.name) |name_table| {
+            return name_table.cast(table.name.NameTable);
         }
         return null;
     }
@@ -238,6 +263,11 @@ pub const Parser = struct {
                 var post_table = try table.post.init(self.allocator, &self.reader);
                 try post_table.parse();
                 self.parsed_tables.post = post_table;
+            },
+            .name => {
+                var name_table = try table.name.init(self.allocator, &self.reader);
+                try name_table.parse();
+                self.parsed_tables.name = name_table;
             },
             else => {
                 // TODO: Implement parsing for other tables
