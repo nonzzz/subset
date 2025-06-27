@@ -254,6 +254,11 @@ pub const Parser = struct {
                 try maxp_table.parse();
                 self.parsed_tables.maxp = maxp_table;
             },
+            .name => {
+                var name_table = try table.name.init(self.allocator, &self.reader);
+                try name_table.parse();
+                self.parsed_tables.name = name_table;
+            },
             .os2 => {
                 var os2_table = try table.os2.init(self.allocator, &self.reader);
                 try os2_table.parse();
@@ -263,11 +268,6 @@ pub const Parser = struct {
                 var post_table = try table.post.init(self.allocator, &self.reader);
                 try post_table.parse();
                 self.parsed_tables.post = post_table;
-            },
-            .name => {
-                var name_table = try table.name.init(self.allocator, &self.reader);
-                try name_table.parse();
-                self.parsed_tables.name = name_table;
             },
             else => {
                 // TODO: Implement parsing for other tables
@@ -338,5 +338,20 @@ test "Parser" {
         std.debug.print("HHEA ascender: {}\n", .{hhea_data.ascender});
         std.debug.print("HHEA descender: {}\n", .{hhea_data.descender});
         std.debug.print("Number of HMetrics: {}\n", .{hhea_data.number_of_hmetrics});
+    }
+
+    if (parser.parsed_tables.get_name()) |name_table| {
+        std.debug.print("Name table version: {}\n", .{name_table.version});
+        std.debug.print("Number of name records: {}\n", .{name_table.count});
+        for (name_table.name_records) |record| {
+            std.debug.print("Name Record: platform_id: {}, encoding_id: {}, language_id: {}, name_id: {}, length: {}, offset: {}\n", .{
+                record.platform_id,
+                record.encoding_id,
+                record.language_id,
+                record.name_id,
+                record.length,
+                record.string_offset,
+            });
+        }
     }
 }
