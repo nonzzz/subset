@@ -5,6 +5,7 @@ pub const hhea = @import("./hhea.zig");
 pub const maxp = @import("./maxp.zig");
 pub const os2 = @import("./os2.zig");
 pub const post = @import("./post.zig");
+pub const name = @import("./name.zig");
 
 test {
     _ = head;
@@ -12,4 +13,5 @@ test {
     _ = maxp;
     _ = os2;
     _ = post;
+    _ = name;
 }
