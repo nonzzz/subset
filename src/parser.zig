@@ -99,6 +99,8 @@ pub const ParsedTables = struct {
     os2: ?Table = null,
     post: ?Table = null,
     name: ?Table = null,
+    hmtx: ?Table = null,
+    cmap: ?Table = null,
 
     pub inline fn is_parsed(self: *Self, tag: TableTag) bool {
         return switch (tag) {
@@ -108,6 +110,8 @@ pub const ParsedTables = struct {
             .os2 => self.os2 != null,
             .post => self.post != null,
             .name => self.name != null,
+            .hmtx => self.hmtx != null,
+            .cmap => self.cmap != null,
             else => false,
         };
     }
@@ -239,6 +243,11 @@ pub const Parser = struct {
         try self.reader.seek_to(record.offset);
 
         switch (tag) {
+            .cmap => {
+                var cmap_table = try table.cmap.init(self.allocator, &self.reader);
+                try cmap_table.parse();
+                self.parsed_tables.cmap = cmap_table;
+            },
             .head => {
                 var head_table = try table.head.init(self.allocator, &self.reader);
                 try head_table.parse();
@@ -268,6 +277,11 @@ pub const Parser = struct {
                 var post_table = try table.post.init(self.allocator, &self.reader);
                 try post_table.parse();
                 self.parsed_tables.post = post_table;
+            },
+            .hmtx => {
+                var hmtx_table = try table.hmtx.init(self.allocator, &self.reader);
+                try hmtx_table.parse();
+                self.parsed_tables.hmtx = hmtx_table;
             },
             else => {
                 // TODO: Implement parsing for other tables
