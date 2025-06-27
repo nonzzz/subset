@@ -6,8 +6,8 @@ pub const maxp = @import("./maxp.zig");
 pub const os2 = @import("./os2.zig");
 pub const post = @import("./post.zig");
 pub const name = @import("./name.zig");
-const cmap = @import("./cmap.zig");
-const hmtx = @import("./hmtx.zig");
+pub const cmap = @import("./cmap.zig");
+pub const hmtx = @import("./hmtx.zig");
 
 test {
     _ = head;
