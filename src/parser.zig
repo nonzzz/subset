@@ -366,6 +366,7 @@ test "Parser" {
                 record.length,
                 record.string_offset,
             });
+            std.debug.print("{s}\n", .{name_table.get_by_name_id(record.name_id) orelse "N/A"});
         }
     }
 }
