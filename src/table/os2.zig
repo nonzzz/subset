@@ -1,6 +1,7 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
+const ParsedTables = @import("../parser.zig").ParsedTables;
 
 const Allocator = std.mem.Allocator;
 
@@ -77,6 +78,7 @@ pub const Os2Table = struct {
 
     allocator: Allocator,
     byte_reader: *reader.ByteReader,
+    parsed_tables: *ParsedTables,
 
     version: Version,
 
@@ -235,13 +237,14 @@ pub const Os2Table = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = undefined;
         self.allocator = allocator;
         self.byte_reader = byte_reader;
+        self.parsed_tables = parsed_tables;
 
         return Table{
             .ptr = self,
@@ -290,8 +293,8 @@ pub const Os2Table = struct {
     }
 };
 
-pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
-    return Os2Table.init(allocator, byte_reader);
+pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
+    return Os2Table.init(allocator, byte_reader, parsed_tables);
 }
 
 test "parse os2 table" {
@@ -352,7 +355,8 @@ test "parse os2 table" {
         0x00, 0x03, // usMaxContext = 3
     };
     var byte_reader = reader.ByteReader.init(buffer);
-    const table = try Os2Table.init(allocator, &byte_reader);
+    var dummy_parsed_tables: ParsedTables = undefined;
+    const table = try Os2Table.init(allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
     try table.parse();
     const os2_table = table.cast(Os2Table);

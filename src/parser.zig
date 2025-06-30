@@ -244,42 +244,42 @@ pub const Parser = struct {
 
         switch (tag) {
             .cmap => {
-                var cmap_table = try table.cmap.init(self.allocator, &self.reader);
+                var cmap_table = try table.cmap.init(self.allocator, &self.reader, &self.parsed_tables);
                 try cmap_table.parse();
                 self.parsed_tables.cmap = cmap_table;
             },
             .head => {
-                var head_table = try table.head.init(self.allocator, &self.reader);
+                var head_table = try table.head.init(self.allocator, &self.reader, &self.parsed_tables);
                 try head_table.parse();
                 self.parsed_tables.head = head_table;
             },
             .hhea => {
-                var hhea_table = try table.hhea.init(self.allocator, &self.reader);
+                var hhea_table = try table.hhea.init(self.allocator, &self.reader, &self.parsed_tables);
                 try hhea_table.parse();
                 self.parsed_tables.hhea = hhea_table;
             },
             .maxp => {
-                var maxp_table = try table.maxp.init(self.allocator, &self.reader);
+                var maxp_table = try table.maxp.init(self.allocator, &self.reader, &self.parsed_tables);
                 try maxp_table.parse();
                 self.parsed_tables.maxp = maxp_table;
             },
             .name => {
-                var name_table = try table.name.init(self.allocator, &self.reader);
+                var name_table = try table.name.init(self.allocator, &self.reader, &self.parsed_tables);
                 try name_table.parse();
                 self.parsed_tables.name = name_table;
             },
             .os2 => {
-                var os2_table = try table.os2.init(self.allocator, &self.reader);
+                var os2_table = try table.os2.init(self.allocator, &self.reader, &self.parsed_tables);
                 try os2_table.parse();
                 self.parsed_tables.os2 = os2_table;
             },
             .post => {
-                var post_table = try table.post.init(self.allocator, &self.reader);
+                var post_table = try table.post.init(self.allocator, &self.reader, &self.parsed_tables);
                 try post_table.parse();
                 self.parsed_tables.post = post_table;
             },
             .hmtx => {
-                var hmtx_table = try table.hmtx.init(self.allocator, &self.reader);
+                var hmtx_table = try table.hmtx.init(self.allocator, &self.reader, &self.parsed_tables);
                 try hmtx_table.parse();
                 self.parsed_tables.hmtx = hmtx_table;
             },

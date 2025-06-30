@@ -1,6 +1,7 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
+const ParsedTables = @import("../parser.zig").ParsedTables;
 
 const Allocator = std.mem.Allocator;
 
@@ -9,6 +10,7 @@ pub const HheaTable = struct {
 
     allocator: Allocator,
     byte_reader: *reader.ByteReader,
+    parsed_tables: *ParsedTables,
 
     major_version: u16,
     minor_version: u16,
@@ -66,13 +68,14 @@ pub const HheaTable = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = undefined;
         self.allocator = allocator;
         self.byte_reader = byte_reader;
+        self.parsed_tables = parsed_tables;
 
         return Table{
             .ptr = self,
@@ -81,8 +84,8 @@ pub const HheaTable = struct {
     }
 };
 
-pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
-    return HheaTable.init(allocator, byte_reader);
+pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
+    return HheaTable.init(allocator, byte_reader, parsed_tables);
 }
 
 test "Hhea Table Parsing" {
@@ -107,7 +110,8 @@ test "Hhea Table Parsing" {
         0x00, 0x02, // number_of_hmetrics
     };
     var byte_reader = reader.ByteReader.init(hhea_buffer);
-    var table = try HheaTable.init(std.testing.allocator, &byte_reader);
+    var dummy_parsed_tables: ParsedTables = undefined;
+    var table = try HheaTable.init(std.testing.allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
     try table.parse();
     const hhea_table = table.cast(HheaTable);

@@ -1,6 +1,7 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
+const ParsedTables = @import("../parser.zig").ParsedTables;
 
 const Allocator = std.mem.Allocator;
 
@@ -56,6 +57,7 @@ pub const PostTable = struct {
 
     allocator: Allocator,
     byte_reader: *reader.ByteReader,
+    parsed_tables: *ParsedTables,
 
     version: u32,
     italic_angle: i32,
@@ -184,13 +186,14 @@ pub const PostTable = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = undefined;
         self.allocator = allocator;
         self.byte_reader = byte_reader;
+        self.parsed_tables = parsed_tables;
         self.v2_data = null;
 
         return Table{
@@ -254,8 +257,8 @@ pub const PostTable = struct {
     }
 };
 
-pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
-    return PostTable.init(allocator, byte_reader);
+pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
+    return PostTable.init(allocator, byte_reader, parsed_tables);
 }
 
 test "parse post table v1.0" {
@@ -282,7 +285,8 @@ test "parse post table v1.0" {
     };
 
     var byte_reader = reader.ByteReader.init(buffer);
-    var table = try PostTable.init(allocator, &byte_reader);
+    var dummy_parsed_tables: ParsedTables = undefined;
+    var table = try PostTable.init(allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
 
     try table.parse();
@@ -338,7 +342,8 @@ test "parse post table v2.0" {
     };
 
     var byte_reader = reader.ByteReader.init(buffer);
-    var table = try PostTable.init(allocator, &byte_reader);
+    var dummy_parsed_tables: ParsedTables = undefined;
+    var table = try PostTable.init(allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
 
     try table.parse();
@@ -372,7 +377,8 @@ test "parse post table v2.5 deprecated" {
     };
 
     var byte_reader = reader.ByteReader.init(buffer);
-    var table = try PostTable.init(allocator, &byte_reader);
+    var dummy_parsed_tables: ParsedTables = undefined;
+    var table = try PostTable.init(allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
 
     try std.testing.expectError(PostTable.Error.DeprecatedPostVersion25, table.parse());

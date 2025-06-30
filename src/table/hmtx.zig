@@ -1,6 +1,7 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
+const ParsedTables = @import("../parser.zig").ParsedTables;
 
 const Allocator = std.mem.Allocator;
 
@@ -9,6 +10,7 @@ pub const HtmxTable = struct {
 
     allocator: Allocator,
     byte_reader: *reader.ByteReader,
+    parsed_tables: *ParsedTables,
 
     fn parse(ptr: *anyopaque) !void {
         const self: *Self = @ptrCast(@alignCast(ptr));
@@ -20,13 +22,14 @@ pub const HtmxTable = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = undefined;
         self.allocator = allocator;
         self.byte_reader = byte_reader;
+        self.parsed_tables = parsed_tables;
 
         return Table{
             .ptr = self,
@@ -35,6 +38,6 @@ pub const HtmxTable = struct {
     }
 };
 
-pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
-    return HtmxTable.init(allocator, byte_reader);
+pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
+    return HtmxTable.init(allocator, byte_reader, parsed_tables);
 }
