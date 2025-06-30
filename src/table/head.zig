@@ -1,6 +1,7 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
+const ParsedTables = @import("../parser.zig").ParsedTables;
 
 const Allocator = std.mem.Allocator;
 
@@ -40,6 +41,7 @@ pub const HeadTable = struct {
 
     allocator: Allocator,
     byte_reader: *reader.ByteReader,
+    parsed_tables: *ParsedTables,
 
     major_version: u16,
     minor_version: u16,
@@ -115,13 +117,14 @@ pub const HeadTable = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
+    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = undefined;
         self.allocator = allocator;
         self.byte_reader = byte_reader;
+        self.parsed_tables = parsed_tables;
 
         return Table{
             .ptr = self,
@@ -130,8 +133,8 @@ pub const HeadTable = struct {
     }
 };
 
-pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader) !Table {
-    return HeadTable.init(allocator, byte_reader);
+pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
+    return HeadTable.init(allocator, byte_reader, parsed_tables);
 }
 
 test "MacStyle Parsing" {
@@ -178,7 +181,8 @@ test "Head Table Parsing" {
     };
     var byte_reader = reader.ByteReader.init(head_buffer);
 
-    const table = try HeadTable.init(std.testing.allocator, &byte_reader);
+    var dummy_parsed_tables: ParsedTables = undefined;
+    const table = try HeadTable.init(std.testing.allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
     try table.parse();
 
