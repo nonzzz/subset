@@ -81,7 +81,7 @@ pub const NameTable = struct {
         const begin_offset = self.byte_reader.current_offset();
         const version = try self.byte_reader.read_u16_be();
         if (version != 0x0000 and version != 0x0001) {
-            return Self.Error.InvalidNameTableVersion;
+            return error.InvalidNameTableVersion;
         }
         self.version = version;
         self.count = try self.byte_reader.read_u16_be();
