@@ -67,18 +67,18 @@ pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables
     };
 }
 
-pub fn get_glyph_offset(self: *const Self, glyph_id: u16) ?u32 {
+pub fn get_glyph_offset(self: *Self, glyph_id: u16) ?u32 {
     if (glyph_id >= self.offsets.len - 1) return null;
     return self.offsets[glyph_id];
 }
 
-pub fn get_glyph_length(self: *const Self, glyph_id: u16) ?u32 {
+pub fn get_glyph_length(self: *Self, glyph_id: u16) ?u32 {
     if (glyph_id >= self.offsets.len - 1) return null;
     const start = self.offsets[glyph_id];
     const end = self.offsets[glyph_id + 1];
     return if (end > start) end - start else null;
 }
 
-pub fn has_glyph_data(self: *const Self, glyph_id: u16) bool {
+pub fn has_glyph_data(self: *Self, glyph_id: u16) bool {
     return self.get_glyph_length(glyph_id) != null;
 }

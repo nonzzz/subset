@@ -9,6 +9,7 @@ pub const Name = @import("./name.zig");
 pub const Cmap = @import("./cmap.zig");
 pub const Hmtx = @import("./hmtx.zig");
 pub const Loca = @import("./loca.zig");
+pub const Glyf = @import("./glyf.zig");
 
 test {
     _ = Head;
