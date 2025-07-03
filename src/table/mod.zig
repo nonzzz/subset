@@ -1,21 +1,23 @@
 // https://learn.microsoft.com/en-us/typography/opentype/spec/otff#data-types
 
-pub const head = @import("./head.zig");
-pub const hhea = @import("./hhea.zig");
-pub const maxp = @import("./maxp.zig");
-pub const os2 = @import("./os2.zig");
-pub const post = @import("./post.zig");
-pub const name = @import("./name.zig");
-pub const cmap = @import("./cmap.zig");
-pub const hmtx = @import("./hmtx.zig");
+pub const Head = @import("./head.zig");
+pub const Hhea = @import("./hhea.zig");
+pub const Maxp = @import("./maxp.zig");
+pub const Os2 = @import("./os2.zig");
+pub const Post = @import("./post.zig");
+pub const Name = @import("./name.zig");
+pub const Cmap = @import("./cmap.zig");
+pub const Hmtx = @import("./hmtx.zig");
+pub const Loca = @import("./loca.zig");
 
 test {
-    _ = head;
-    _ = hhea;
-    _ = maxp;
-    _ = os2;
-    _ = post;
-    _ = name;
-    _ = cmap;
-    _ = hmtx;
+    _ = Head;
+    _ = Hhea;
+    _ = Maxp;
+    _ = Os2;
+    _ = Post;
+    _ = Name;
+    _ = Cmap;
+    _ = Hmtx;
+    _ = Loca;
 }

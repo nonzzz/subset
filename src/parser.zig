@@ -125,47 +125,6 @@ pub const ParsedTables = struct {
             }
         }
     }
-
-    pub fn get_head(self: *const Self) ?*table.head.HeadTable {
-        if (self.head) |head_table| {
-            return head_table.cast(table.head.HeadTable);
-        }
-        return null;
-    }
-
-    pub fn get_hhea(self: *const Self) ?*table.hhea.HheaTable {
-        if (self.hhea) |hhea_table| {
-            return hhea_table.cast(table.hhea.HheaTable);
-        }
-        return null;
-    }
-
-    pub fn get_maxp(self: *const Self) ?*table.maxp.MaxpTable {
-        if (self.maxp) |maxp_table| {
-            return maxp_table.cast(table.maxp.MaxpTable);
-        }
-        return null;
-    }
-
-    pub fn get_os2(self: *const Self) ?*table.os2.Os2Table {
-        if (self.os2) |os2_table| {
-            return os2_table.cast(table.os2.Os2Table);
-        }
-        return null;
-    }
-    pub fn get_post(self: *const Self) ?*table.post.PostTable {
-        if (self.post) |post_table| {
-            return post_table.cast(table.post.PostTable);
-        }
-        return null;
-    }
-
-    pub fn get_name(self: *const Self) ?*table.name.NameTable {
-        if (self.name) |name_table| {
-            return name_table.cast(table.name.NameTable);
-        }
-        return null;
-    }
 };
 
 pub const TableRecord = struct {
@@ -244,42 +203,42 @@ pub const Parser = struct {
 
         switch (tag) {
             .cmap => {
-                var cmap_table = try table.cmap.init(self.allocator, &self.reader, &self.parsed_tables);
+                var cmap_table = try table.Cmap.init(self.allocator, &self.reader, &self.parsed_tables);
                 try cmap_table.parse();
                 self.parsed_tables.cmap = cmap_table;
             },
             .head => {
-                var head_table = try table.head.init(self.allocator, &self.reader, &self.parsed_tables);
+                var head_table = try table.Head.init(self.allocator, &self.reader, &self.parsed_tables);
                 try head_table.parse();
                 self.parsed_tables.head = head_table;
             },
             .hhea => {
-                var hhea_table = try table.hhea.init(self.allocator, &self.reader, &self.parsed_tables);
+                var hhea_table = try table.Hhea.init(self.allocator, &self.reader, &self.parsed_tables);
                 try hhea_table.parse();
                 self.parsed_tables.hhea = hhea_table;
             },
             .maxp => {
-                var maxp_table = try table.maxp.init(self.allocator, &self.reader, &self.parsed_tables);
+                var maxp_table = try table.Maxp.init(self.allocator, &self.reader, &self.parsed_tables);
                 try maxp_table.parse();
                 self.parsed_tables.maxp = maxp_table;
             },
             .name => {
-                var name_table = try table.name.init(self.allocator, &self.reader, &self.parsed_tables);
+                var name_table = try table.Name.init(self.allocator, &self.reader, &self.parsed_tables);
                 try name_table.parse();
                 self.parsed_tables.name = name_table;
             },
             .os2 => {
-                var os2_table = try table.os2.init(self.allocator, &self.reader, &self.parsed_tables);
+                var os2_table = try table.Os2.init(self.allocator, &self.reader, &self.parsed_tables);
                 try os2_table.parse();
                 self.parsed_tables.os2 = os2_table;
             },
             .post => {
-                var post_table = try table.post.init(self.allocator, &self.reader, &self.parsed_tables);
+                var post_table = try table.Post.init(self.allocator, &self.reader, &self.parsed_tables);
                 try post_table.parse();
                 self.parsed_tables.post = post_table;
             },
             .hmtx => {
-                var hmtx_table = try table.hmtx.init(self.allocator, &self.reader, &self.parsed_tables);
+                var hmtx_table = try table.Hmtx.init(self.allocator, &self.reader, &self.parsed_tables);
                 try hmtx_table.parse();
                 self.parsed_tables.hmtx = hmtx_table;
             },
@@ -336,37 +295,37 @@ test "Parser" {
     defer parser.deinit();
     try parser.parse();
 
-    if (parser.parsed_tables.get_head()) |head_data| {
-        std.debug.print("Head table version: {}.{}\n", .{ head_data.major_version, head_data.minor_version });
-        std.debug.print("Units per EM: {}\n", .{head_data.units_per_em});
-    }
+    // if (parser.parsed_tables.get_head()) |head_data| {
+    //     std.debug.print("Head table version: {}.{}\n", .{ head_data.major_version, head_data.minor_version });
+    //     std.debug.print("Units per EM: {}\n", .{head_data.units_per_em});
+    // }
 
-    if (parser.parsed_tables.get_maxp()) |maxp_data| {
-        std.debug.print("MAXP version: 0x{X}\n", .{maxp_data.version});
-        std.debug.print("Number of glyphs: {}\n", .{maxp_data.num_glyphs});
-        std.debug.print("Is TTF: {}\n", .{maxp_data.is_ttf()});
-        std.debug.print("Is CFF: {}\n", .{maxp_data.is_cff()});
-    }
+    // if (parser.parsed_tables.get_maxp()) |maxp_data| {
+    //     std.debug.print("MAXP version: 0x{X}\n", .{maxp_data.version});
+    //     std.debug.print("Number of glyphs: {}\n", .{maxp_data.num_glyphs});
+    //     std.debug.print("Is TTF: {}\n", .{maxp_data.is_ttf()});
+    //     std.debug.print("Is CFF: {}\n", .{maxp_data.is_cff()});
+    // }
 
-    if (parser.parsed_tables.get_hhea()) |hhea_data| {
-        std.debug.print("HHEA ascender: {}\n", .{hhea_data.ascender});
-        std.debug.print("HHEA descender: {}\n", .{hhea_data.descender});
-        std.debug.print("Number of HMetrics: {}\n", .{hhea_data.number_of_hmetrics});
-    }
+    // if (parser.parsed_tables.get_hhea()) |hhea_data| {
+    //     std.debug.print("HHEA ascender: {}\n", .{hhea_data.ascender});
+    //     std.debug.print("HHEA descender: {}\n", .{hhea_data.descender});
+    //     std.debug.print("Number of HMetrics: {}\n", .{hhea_data.number_of_hmetrics});
+    // }
 
-    if (parser.parsed_tables.get_name()) |name_table| {
-        std.debug.print("Name table version: {}\n", .{name_table.version});
-        std.debug.print("Number of name records: {}\n", .{name_table.count});
-        for (name_table.name_records) |record| {
-            std.debug.print("Name Record: platform_id: {}, encoding_id: {}, language_id: {}, name_id: {}, length: {}, offset: {}\n", .{
-                record.platform_id,
-                record.encoding_id,
-                record.language_id,
-                record.name_id,
-                record.length,
-                record.string_offset,
-            });
-            std.debug.print("{s}\n", .{name_table.get_by_name_id(record.name_id) orelse "N/A"});
-        }
-    }
+    // if (parser.parsed_tables.get_name()) |name_table| {
+    //     std.debug.print("Name table version: {}\n", .{name_table.version});
+    //     std.debug.print("Number of name records: {}\n", .{name_table.count});
+    //     for (name_table.name_records) |record| {
+    //         std.debug.print("Name Record: platform_id: {}, encoding_id: {}, language_id: {}, name_id: {}, length: {}, offset: {}\n", .{
+    //             record.platform_id,
+    //             record.encoding_id,
+    //             record.language_id,
+    //             record.name_id,
+    //             record.length,
+    //             record.string_offset,
+    //         });
+    //         std.debug.print("{s}\n", .{name_table.get_by_name_id(record.name_id) orelse "N/A"});
+    //     }
+    // }
 }
