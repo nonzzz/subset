@@ -45,18 +45,63 @@ pub const SimpleGlyph = struct {
     }
 };
 
+pub const ComponentTransform = union(enum) {
+    none,
+    scale: struct { scale: f32 },
+    xy_scale: struct { x_scale: f32, y_scale: f32 },
+    matrix: struct { xx: f32, xy: f32, yx: f32, yy: f32 },
+};
+
+pub const CompositeComponent = struct {
+    flags: u16,
+    glyph_index: u16,
+    arg1: i32,
+    arg2: i32,
+    transform: ComponentTransform,
+
+    pub fn has_more_components(self: CompositeComponent) bool {
+        return (self.flags & 0x0020) != 0;
+    }
+
+    pub fn args_are_words(self: CompositeComponent) bool {
+        return (self.flags & 0x0001) != 0;
+    }
+
+    pub fn args_are_xy_values(self: CompositeComponent) bool {
+        return (self.flags & 0x0002) != 0;
+    }
+
+    pub fn has_instructions(self: CompositeComponent) bool {
+        return (self.flags & 0x0100) != 0;
+    }
+};
+
+pub const CompositeGlyph = struct {
+    header: GlyphHeader,
+    components: []CompositeComponent,
+    instructions: []u8,
+
+    pub fn deinit(self: *CompositeGlyph, allocator: Allocator) void {
+        allocator.free(self.components);
+        allocator.free(self.instructions);
+    }
+};
+
 pub const ParsedGlyph = union(enum) {
     simple: SimpleGlyph,
+    composite: CompositeGlyph,
 
     pub fn deinit(self: *ParsedGlyph, allocator: Allocator) void {
         switch (self.*) {
             .simple => |*simple| simple.deinit(allocator),
+            .composite => |*composite| composite.deinit(allocator),
         }
     }
 
     pub fn get_header(self: ParsedGlyph) GlyphHeader {
         return switch (self) {
             .simple => |simple| simple.header,
+            .composite => |composite| composite.header,
         };
     }
 };
@@ -105,7 +150,7 @@ fn parse_simple_glyph(self: *Self, glyph_header: GlyphHeader) void {
     for (0..instruction_length) |i| {
         instructions[i] = try self.byte_reader.read_u8();
     }
-    // The number of points is determined by the last entry in the endPtsOfContours array
+
     const variable = if (glyph_header.number_of_contours > 0) end_pts_of_contours[glyph_header.number_of_contours - 1] + 1 else 0;
 
     var flags = try self.allocator.alloc(u8, variable);
@@ -178,9 +223,88 @@ fn parse_simple_glyph(self: *Self, glyph_header: GlyphHeader) void {
     };
 }
 
-// fn parse_composite_glyph(self: *Self, glyph_header: GlyphHeader, glyph_length: u32) void {
-//     _ = self;
-// }
+fn parse_composite_glyph(self: *Self, glyph_header: GlyphHeader) !CompositeGlyph {
+    var components = std.ArrayList(CompositeComponent).init(self.allocator);
+    errdefer components.deinit();
+
+    var has_more_components = true;
+
+    while (has_more_components) {
+        const flags = try self.byte_reader.read_u16_be();
+        const glyph_index = try self.byte_reader.read_u16_be();
+
+        var arg1: i32 = 0;
+        var arg2: i32 = 0;
+
+        if ((flags & 0x0001) != 0) {
+            arg1 = try self.byte_reader.read_i16_be();
+            arg2 = try self.byte_reader.read_i16_be();
+        } else {
+            arg1 = @as(i8, @bitCast(try self.byte_reader.read_u8()));
+            arg2 = @as(i8, @bitCast(try self.byte_reader.read_u8()));
+        }
+
+        var transform = ComponentTransform.none;
+
+        // https://learn.microsoft.com/en-us/typography/opentype/spec/glyf#composite-glyph-description
+        if ((flags & 0x0008) != 0) {
+            const scale_raw = try self.byte_reader.read_i16_be();
+            const scale = @as(f32, @floatFromInt(scale_raw)) / 16384.0;
+            transform = ComponentTransform{ .scale = .{ .scale = scale } };
+        } else if ((flags & 0x0040) != 0) {
+            const x_scale_raw = try self.byte_reader.read_i16_be();
+            const y_scale_raw = try self.byte_reader.read_i16_be();
+            const x_scale = @as(f32, @floatFromInt(x_scale_raw)) / 16384.0;
+            const y_scale = @as(f32, @floatFromInt(y_scale_raw)) / 16384.0;
+            transform = ComponentTransform{ .xy_scale = .{ .x_scale = x_scale, .y_scale = y_scale } };
+        } else if ((flags & 0x0080) != 0) {
+            const xx_raw = try self.byte_reader.read_i16_be();
+            const xy_raw = try self.byte_reader.read_i16_be();
+            const yx_raw = try self.byte_reader.read_i16_be();
+            const yy_raw = try self.byte_reader.read_i16_be();
+
+            const xx = @as(f32, @floatFromInt(xx_raw)) / 16384.0;
+            const xy = @as(f32, @floatFromInt(xy_raw)) / 16384.0;
+            const yx = @as(f32, @floatFromInt(yx_raw)) / 16384.0;
+            const yy = @as(f32, @floatFromInt(yy_raw)) / 16384.0;
+
+            transform = ComponentTransform{ .matrix = .{ .xx = xx, .xy = xy, .yx = yx, .yy = yy } };
+        }
+
+        const component = CompositeComponent{
+            .flags = flags,
+            .glyph_index = glyph_index,
+            .arg1 = arg1,
+            .arg2 = arg2,
+            .transform = transform,
+        };
+
+        try components.append(component);
+
+        has_more_components = (flags & 0x0020) != 0;
+    }
+
+    var instructions: []u8 = &.{};
+
+    if (components.items.len > 0) {
+        const last_component = components.items[components.items.len - 1];
+        if ((last_component.flags & 0x0100) != 0) {
+            const instruction_length = try self.byte_reader.read_u16_be();
+            instructions = try self.allocator.alloc(u8, instruction_length);
+            errdefer self.allocator.free(instructions);
+
+            for (0..instruction_length) |i| {
+                instructions[i] = try self.byte_reader.read_u8();
+            }
+        }
+    }
+
+    return CompositeGlyph{
+        .header = glyph_header,
+        .components = try components.toOwnedSlice(),
+        .instructions = instructions,
+    };
+}
 
 pub fn parse_glyph(self: *Self, glyph_offset: u32) !void {
     try self.byte_reader.seek_to(self.table_offset + glyph_offset);
@@ -197,7 +321,8 @@ pub fn parse_glyph(self: *Self, glyph_offset: u32) !void {
         const simple = try parse_simple_glyph(self, glyph_header);
         return ParsedGlyph{ .simple = simple };
     } else if (glyph_header.is_composite()) {
-        // parse_composite_glyph(self, glyph_header);
+        const composite = try self.parse_composite_glyph(glyph_header);
+        return ParsedGlyph{ .composite = composite };
     } else {
         return Error.InvalidGlyfTable;
     }
