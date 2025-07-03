@@ -2,12 +2,9 @@ const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
 const ParsedTables = @import("../parser.zig").ParsedTables;
+const Error = @import("./errors.zig").Error;
 
 const Allocator = std.mem.Allocator;
-
-const Error = error{
-    InvalidOs2Version,
-};
 
 // OS/2 is a complex table. Those getter functions are used to access the data
 
@@ -65,7 +62,7 @@ pub const Version = enum(u16) {
 
     inline fn form_u16(b: u16) !Version {
         return std.meta.intToEnum(Version, b) catch {
-            return error.InvalidOs2Version;
+            return Error.InvalidOs2Version;
         };
     }
     inline fn to_u16(self: Version) u16 {

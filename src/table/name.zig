@@ -3,6 +3,8 @@ const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
 const ParsedTables = @import("../parser.zig").ParsedTables;
 
+const Error = @import("./errors.zig").Error;
+
 // https://learn.microsoft.com/en-us/typography/opentype/spec/name
 
 const Allocator = std.mem.Allocator;
@@ -22,10 +24,6 @@ name_records: []NameRecord,
 v1_data: ?V1 = null,
 
 string_data: []u8,
-
-const Error = error{
-    InvalidNameTableVersion,
-};
 
 pub const NameRecord = struct {
     platform_id: u16,
@@ -80,7 +78,7 @@ fn parse(ptr: *anyopaque) anyerror!void {
     const begin_offset = self.byte_reader.current_offset();
     const version = try self.byte_reader.read_u16_be();
     if (version != 0x0000 and version != 0x0001) {
-        return error.InvalidNameTableVersion;
+        return Error.InvalidNameTableVersion;
     }
     self.version = version;
     self.count = try self.byte_reader.read_u16_be();
