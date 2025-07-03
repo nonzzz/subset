@@ -101,7 +101,10 @@ pub const ParsedTables = struct {
     name: ?Table = null,
     hmtx: ?Table = null,
     cmap: ?Table = null,
+
+    // TTF
     loca: ?Table = null,
+    glyf: ?Table = null,
 
     pub inline fn is_parsed(self: *Self, tag: TableTag) bool {
         inline for (std.meta.fields(Self)) |field| {
@@ -196,6 +199,7 @@ pub const Parser = struct {
         }
     }
 
+    // Normally glyf tables should not be fully parsed.
     fn parse_table(self: *Self, tag: TableTag, record: TableRecord) !void {
         try self.reader.seek_to(record.offset);
 
@@ -244,6 +248,11 @@ pub const Parser = struct {
                 var loca_table = try table.Loca.init(self.allocator, &self.reader, &self.parsed_tables);
                 try loca_table.parse();
                 self.parsed_tables.loca = loca_table;
+            },
+            .glyf => {
+                var glyf_table = try table.Glyf.init(self.allocator, &self.reader, &self.parsed_tables);
+                try glyf_table.parse();
+                self.parsed_tables.glyf = glyf_table;
             },
             else => {
                 // TODO: Implement parsing for other tables
@@ -298,43 +307,5 @@ test "Parser" {
     var parser = try Parser.init(allocator, file_content);
     defer parser.deinit();
     try parser.parse();
-
-    // if (parser.parsed_tables.get_head()) |head_data| {
-    //     std.debug.print("Head table version: {}.{}\n", .{ head_data.major_version, head_data.minor_version });
-    //     std.debug.print("Units per EM: {}\n", .{head_data.units_per_em});
-    // }
-
-    // if (parser.parsed_tables.get_maxp()) |maxp_data| {
-    //     std.debug.print("MAXP version: 0x{X}\n", .{maxp_data.version});
-    //     std.debug.print("Number of glyphs: {}\n", .{maxp_data.num_glyphs});
-    //     std.debug.print("Is TTF: {}\n", .{maxp_data.is_ttf()});
-    //     std.debug.print("Is CFF: {}\n", .{maxp_data.is_cff()});
-    // }
-
-    // if (parser.parsed_tables.get_hhea()) |hhea_data| {
-    //     std.debug.print("HHEA ascender: {}\n", .{hhea_data.ascender});
-    //     std.debug.print("HHEA descender: {}\n", .{hhea_data.descender});
-    //     std.debug.print("Number of HMetrics: {}\n", .{hhea_data.number_of_hmetrics});
-    // }
-
-    // if (parser.parsed_tables.get_name()) |name_table| {
-    //     std.debug.print("Name table version: {}\n", .{name_table.version});
-    //     std.debug.print("Number of name records: {}\n", .{name_table.count});
-    //     for (name_table.name_records) |record| {
-    //         std.debug.print("Name Record: platform_id: {}, encoding_id: {}, language_id: {}, name_id: {}, length: {}, offset: {}\n", .{
-    //             record.platform_id,
-    //             record.encoding_id,
-    //             record.language_id,
-    //             record.name_id,
-    //             record.length,
-    //             record.string_offset,
-    //         });
-    //         std.debug.print("{s}\n", .{name_table.get_by_name_id(record.name_id) orelse "N/A"});
-    //     }
-    // }
-
-    if (parser.parsed_tables.loca) |loca_table| {
-        const loca = loca_table.cast(table.Loca);
-        std.debug.print("LOCA offsets: {any}\n", .{loca.offsets});
-    }
+    try std.testing.expect(true);
 }

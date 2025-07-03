@@ -5,6 +5,7 @@ pub const Error = error{
     InvalidNameTableVersion,
     InvalidOs2Version,
     InvalidPostVersion,
+    InvalidGlyfTable,
     DeprecatedPostVersion25,
 
     MissingHheaTable,
