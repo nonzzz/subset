@@ -36,105 +36,99 @@ pub const MacStyle = packed struct {
     }
 };
 
-pub const HeadTable = struct {
-    const Self = @This();
+const Self = @This();
 
-    allocator: Allocator,
-    byte_reader: *reader.ByteReader,
-    parsed_tables: *ParsedTables,
+allocator: Allocator,
+byte_reader: *reader.ByteReader,
+parsed_tables: *ParsedTables,
 
-    major_version: u16,
-    minor_version: u16,
-    font_revision: u32,
-    checksum_adjustment: u32,
-    magic_number: u32,
-    flags: u16,
-    units_per_em: u16,
-    created: i64,
-    modified: i64,
-    x_min: i16,
-    y_min: i16,
-    x_max: i16,
-    y_max: i16,
-    mac_style: MacStyle,
-    lowest_rec_ppem: u16,
-    font_direction_hint: i16,
-    index_to_loc_format: i16,
-    glyph_data_format: i16,
+major_version: u16,
+minor_version: u16,
+font_revision: u32,
+checksum_adjustment: u32,
+magic_number: u32,
+flags: u16,
+units_per_em: u16,
+created: i64,
+modified: i64,
+x_min: i16,
+y_min: i16,
+x_max: i16,
+y_max: i16,
+mac_style: MacStyle,
+lowest_rec_ppem: u16,
+font_direction_hint: i16,
+index_to_loc_format: i16,
+glyph_data_format: i16,
 
-    const Error = error{
-        InvalidHeadTable,
-    };
-
-    fn parse(ptr: *anyopaque) anyerror!void {
-        const self: *Self = @ptrCast(@alignCast(ptr));
-
-        if (self.byte_reader.buffer.len < 54) {
-            return Error.InvalidHeadTable;
-        }
-
-        const major_version = try self.byte_reader.read_u16_be();
-        const minor_version = try self.byte_reader.read_u16_be();
-        const font_revision = try self.byte_reader.read_u32_be();
-        const checksum_adjustment = try self.byte_reader.read_u32_be();
-        const magic_number = try self.byte_reader.read_u32_be();
-        const flags = try self.byte_reader.read_u16_be();
-        const units_per_em = try self.byte_reader.read_u16_be();
-        const created = try self.byte_reader.read_i64_be();
-        const modified = try self.byte_reader.read_i64_be();
-        const x_min = try self.byte_reader.read_i16_be();
-        const y_min = try self.byte_reader.read_i16_be();
-        const x_max = try self.byte_reader.read_i16_be();
-        const y_max = try self.byte_reader.read_i16_be();
-        const mac_style = try self.byte_reader.read_u16_be();
-        const lowest_rec_ppem = try self.byte_reader.read_u16_be();
-        const font_direction_hint = try self.byte_reader.read_i16_be();
-        const index_to_loc_format = try self.byte_reader.read_i16_be();
-        const glyph_data_format = try self.byte_reader.read_i16_be();
-
-        self.major_version = major_version;
-        self.minor_version = minor_version;
-        self.font_revision = font_revision;
-        self.checksum_adjustment = checksum_adjustment;
-        self.magic_number = magic_number;
-        self.flags = flags;
-        self.units_per_em = units_per_em;
-        self.created = created;
-        self.modified = modified;
-        self.x_min = x_min;
-        self.y_min = y_min;
-        self.x_max = x_max;
-        self.y_max = y_max;
-        self.mac_style = MacStyle.from_u16(mac_style);
-        self.lowest_rec_ppem = lowest_rec_ppem;
-        self.font_direction_hint = font_direction_hint;
-        self.index_to_loc_format = index_to_loc_format;
-        self.glyph_data_format = glyph_data_format;
-    }
-
-    fn deinit(ptr: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(ptr));
-        self.allocator.destroy(self);
-    }
-
-    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
-        const self = try allocator.create(Self);
-        errdefer allocator.destroy(self);
-
-        self.* = undefined;
-        self.allocator = allocator;
-        self.byte_reader = byte_reader;
-        self.parsed_tables = parsed_tables;
-
-        return Table{
-            .ptr = self,
-            .vtable = &.{ .parse = parse, .deinit = deinit },
-        };
-    }
+const Error = error{
+    InvalidHeadTable,
 };
 
+fn parse(ptr: *anyopaque) anyerror!void {
+    const self: *Self = @ptrCast(@alignCast(ptr));
+
+    if (self.byte_reader.buffer.len < 54) {
+        return Error.InvalidHeadTable;
+    }
+
+    const major_version = try self.byte_reader.read_u16_be();
+    const minor_version = try self.byte_reader.read_u16_be();
+    const font_revision = try self.byte_reader.read_u32_be();
+    const checksum_adjustment = try self.byte_reader.read_u32_be();
+    const magic_number = try self.byte_reader.read_u32_be();
+    const flags = try self.byte_reader.read_u16_be();
+    const units_per_em = try self.byte_reader.read_u16_be();
+    const created = try self.byte_reader.read_i64_be();
+    const modified = try self.byte_reader.read_i64_be();
+    const x_min = try self.byte_reader.read_i16_be();
+    const y_min = try self.byte_reader.read_i16_be();
+    const x_max = try self.byte_reader.read_i16_be();
+    const y_max = try self.byte_reader.read_i16_be();
+    const mac_style = try self.byte_reader.read_u16_be();
+    const lowest_rec_ppem = try self.byte_reader.read_u16_be();
+    const font_direction_hint = try self.byte_reader.read_i16_be();
+    const index_to_loc_format = try self.byte_reader.read_i16_be();
+    const glyph_data_format = try self.byte_reader.read_i16_be();
+
+    self.major_version = major_version;
+    self.minor_version = minor_version;
+    self.font_revision = font_revision;
+    self.checksum_adjustment = checksum_adjustment;
+    self.magic_number = magic_number;
+    self.flags = flags;
+    self.units_per_em = units_per_em;
+    self.created = created;
+    self.modified = modified;
+    self.x_min = x_min;
+    self.y_min = y_min;
+    self.x_max = x_max;
+    self.y_max = y_max;
+    self.mac_style = MacStyle.from_u16(mac_style);
+    self.lowest_rec_ppem = lowest_rec_ppem;
+    self.font_direction_hint = font_direction_hint;
+    self.index_to_loc_format = index_to_loc_format;
+    self.glyph_data_format = glyph_data_format;
+}
+
+fn deinit(ptr: *anyopaque) void {
+    const self: *Self = @ptrCast(@alignCast(ptr));
+    self.allocator.destroy(self);
+}
+
 pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
-    return HeadTable.init(allocator, byte_reader, parsed_tables);
+    const self = try allocator.create(Self);
+    errdefer allocator.destroy(self);
+
+    self.* = undefined;
+    self.allocator = allocator;
+    self.byte_reader = byte_reader;
+    self.parsed_tables = parsed_tables;
+
+    return Table{
+        .ptr = self,
+        .vtable = &.{ .parse = parse, .deinit = deinit },
+    };
 }
 
 test "MacStyle Parsing" {
@@ -182,11 +176,11 @@ test "Head Table Parsing" {
     var byte_reader = reader.ByteReader.init(head_buffer);
 
     var dummy_parsed_tables: ParsedTables = undefined;
-    const table = try HeadTable.init(std.testing.allocator, &byte_reader, &dummy_parsed_tables);
+    const table = try init(std.testing.allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
     try table.parse();
 
-    const head_table = table.cast(HeadTable);
+    const head_table = table.cast(Self);
     try std.testing.expect(head_table.major_version == 1);
     try std.testing.expect(head_table.minor_version == 0);
     try std.testing.expect(head_table.font_revision == 0x00010041);

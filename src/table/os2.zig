@@ -73,228 +73,222 @@ pub const Version = enum(u16) {
     }
 };
 
-pub const Os2Table = struct {
-    const Self = @This();
+const Self = @This();
 
-    allocator: Allocator,
-    byte_reader: *reader.ByteReader,
-    parsed_tables: *ParsedTables,
+allocator: Allocator,
+byte_reader: *reader.ByteReader,
+parsed_tables: *ParsedTables,
 
-    version: Version,
+version: Version,
 
-    v0_data: ?V0 = null,
-    v1_data: ?V1 = null,
-    v2_data: ?V2 = null,
-    v3_data: ?V3 = null,
-    v4_data: ?V4 = null,
-    v5_data: ?V5 = null,
+v0_data: ?V0 = null,
+v1_data: ?V1 = null,
+v2_data: ?V2 = null,
+v3_data: ?V3 = null,
+v4_data: ?V4 = null,
+v5_data: ?V5 = null,
 
-    const V0 = struct {
-        x_avg_char_width: i16,
-        us_weight_class: u16,
-        us_width_class: u16,
-        fs_type: u16,
-        y_subscript_x_size: i16,
-        y_subscript_y_size: i16,
-        y_subscript_x_offset: i16,
-        y_subscript_y_offset: i16,
-        y_superscript_x_size: i16,
-        y_superscript_y_size: i16,
-        y_superscript_x_offset: i16,
-        y_superscript_y_offset: i16,
-        y_strikeout_size: i16,
-        y_strikeout_position: i16,
-        s_family_class: i16,
-        panose: [10]u8,
-        ul_unicode_range1: u32,
-        ul_unicode_range2: u32,
-        ul_unicode_range3: u32,
-        ul_unicode_range4: u32,
-        ach_vend_id: [4]u8,
-        fs_selection: u16,
-        us_first_char_index: u16,
-        us_last_char_index: u16,
-        s_typo_ascender: i16,
-        s_typo_descender: i16,
-        s_typo_line_gap: i16,
-        us_win_ascent: u16,
-        us_win_descent: u16,
-    };
-
-    const V1 = struct {
-        ul_code_page_range1: u32,
-        ul_code_page_range2: u32,
-    };
-
-    const V2 = struct {
-        sx_height: i16,
-        s_cap_height: i16,
-        us_default_char: u16,
-        us_break_char: u16,
-        us_max_context: u16,
-    };
-
-    const V3 = struct {};
-
-    const V4 = struct {};
-
-    const V5 = struct {
-        us_lower_optical_point_size: u16,
-        us_upper_optical_point_size: u16,
-    };
-
-    fn parse(ptr: *anyopaque) anyerror!void {
-        const self: *Self = @ptrCast(@alignCast(ptr));
-        self.version = try Version.form_u16(try self.byte_reader.read_u16_be());
-
-        const raw_version = self.version.to_u16();
-
-        if (raw_version >= 0) {
-            self.v0_data = try self.parse_v0();
-        }
-
-        if (raw_version >= 1) {
-            self.v1_data = try self.parse_v1();
-        }
-
-        if (raw_version >= 2) {
-            self.v2_data = try self.parse_v2();
-        }
-
-        if (raw_version >= 3) {
-            self.v3_data = V3{};
-        }
-
-        if (raw_version >= 4) {
-            self.v4_data = V4{};
-        }
-
-        if (raw_version >= 5) {
-            self.v5_data = try self.parse_v5();
-        }
-    }
-
-    fn parse_v0(self: *Self) !V0 {
-        return V0{
-            .x_avg_char_width = try self.byte_reader.read_i16_be(),
-            .us_weight_class = try self.byte_reader.read_u16_be(),
-            .us_width_class = try self.byte_reader.read_u16_be(),
-            .fs_type = try self.byte_reader.read_u16_be(),
-            .y_subscript_x_size = try self.byte_reader.read_i16_be(),
-            .y_subscript_y_size = try self.byte_reader.read_i16_be(),
-            .y_subscript_x_offset = try self.byte_reader.read_i16_be(),
-            .y_subscript_y_offset = try self.byte_reader.read_i16_be(),
-            .y_superscript_x_size = try self.byte_reader.read_i16_be(),
-            .y_superscript_y_size = try self.byte_reader.read_i16_be(),
-            .y_superscript_x_offset = try self.byte_reader.read_i16_be(),
-            .y_superscript_y_offset = try self.byte_reader.read_i16_be(),
-            .y_strikeout_size = try self.byte_reader.read_i16_be(),
-            .y_strikeout_position = try self.byte_reader.read_i16_be(),
-            .s_family_class = try self.byte_reader.read_i16_be(),
-            .panose = @as([10]u8, (try self.byte_reader.read_bytes(10))[0..10].*),
-            .ul_unicode_range1 = try self.byte_reader.read_u32_be(),
-            .ul_unicode_range2 = try self.byte_reader.read_u32_be(),
-            .ul_unicode_range3 = try self.byte_reader.read_u32_be(),
-            .ul_unicode_range4 = try self.byte_reader.read_u32_be(),
-            .ach_vend_id = @as([4]u8, (try self.byte_reader.read_bytes(4))[0..4].*),
-            .fs_selection = try self.byte_reader.read_u16_be(),
-            .us_first_char_index = try self.byte_reader.read_u16_be(),
-            .us_last_char_index = try self.byte_reader.read_u16_be(),
-            .s_typo_ascender = try self.byte_reader.read_i16_be(),
-            .s_typo_descender = try self.byte_reader.read_i16_be(),
-            .s_typo_line_gap = try self.byte_reader.read_i16_be(),
-            .us_win_ascent = try self.byte_reader.read_u16_be(),
-            .us_win_descent = try self.byte_reader.read_u16_be(),
-        };
-    }
-
-    fn parse_v1(self: *Self) !V1 {
-        return V1{
-            .ul_code_page_range1 = try self.byte_reader.read_u32_be(),
-            .ul_code_page_range2 = try self.byte_reader.read_u32_be(),
-        };
-    }
-
-    fn parse_v2(self: *Self) !V2 {
-        return V2{
-            .sx_height = try self.byte_reader.read_i16_be(),
-            .s_cap_height = try self.byte_reader.read_i16_be(),
-            .us_default_char = try self.byte_reader.read_u16_be(),
-            .us_break_char = try self.byte_reader.read_u16_be(),
-            .us_max_context = try self.byte_reader.read_u16_be(),
-        };
-    }
-
-    fn parse_v5(self: *Self) !V5 {
-        return V5{
-            .us_lower_optical_point_size = try self.byte_reader.read_u16_be(),
-            .us_upper_optical_point_size = try self.byte_reader.read_u16_be(),
-        };
-    }
-
-    fn deinit(ptr: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(ptr));
-        self.allocator.destroy(self);
-    }
-
-    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
-        const self = try allocator.create(Self);
-        errdefer allocator.destroy(self);
-
-        self.* = undefined;
-        self.allocator = allocator;
-        self.byte_reader = byte_reader;
-        self.parsed_tables = parsed_tables;
-
-        return Table{
-            .ptr = self,
-            .vtable = &.{ .parse = parse, .deinit = deinit },
-        };
-    }
-
-    fn get_weight_class(self: *Self) ?u16 {
-        return if (self.v0_data) |data| data.us_weight_class else null;
-    }
-
-    fn get_width_class(self: *Self) ?u16 {
-        return if (self.v0_data) |data| data.us_width_class else null;
-    }
-
-    pub fn get_fs_type(self: *Self) ?u16 {
-        return if (self.v0_data) |data| data.fs_type else null;
-    }
-
-    pub fn get_typo_ascender(self: *Self) ?i16 {
-        return if (self.v0_data) |data| data.s_typo_ascender else null;
-    }
-
-    pub fn get_typo_descender(self: *Self) ?i16 {
-        return if (self.v0_data) |data| data.s_typo_descender else null;
-    }
-
-    pub fn get_typo_line_gap(self: *Self) ?i16 {
-        return if (self.v0_data) |data| data.s_typo_line_gap else null;
-    }
-
-    pub fn get_win_ascent(self: *Self) ?u16 {
-        return if (self.v0_data) |data| data.us_win_ascent else null;
-    }
-
-    pub fn get_win_descent(self: *Self) ?u16 {
-        return if (self.v0_data) |data| data.us_win_descent else null;
-    }
-
-    pub fn get_x_height(self: *Self) ?i16 {
-        return if (self.v2_data) |data| data.sx_height else null;
-    }
-
-    pub fn get_cap_height(self: *Self) ?i16 {
-        return if (self.v2_data) |data| data.s_cap_height else null;
-    }
+const V0 = struct {
+    x_avg_char_width: i16,
+    us_weight_class: u16,
+    us_width_class: u16,
+    fs_type: u16,
+    y_subscript_x_size: i16,
+    y_subscript_y_size: i16,
+    y_subscript_x_offset: i16,
+    y_subscript_y_offset: i16,
+    y_superscript_x_size: i16,
+    y_superscript_y_size: i16,
+    y_superscript_x_offset: i16,
+    y_superscript_y_offset: i16,
+    y_strikeout_size: i16,
+    y_strikeout_position: i16,
+    s_family_class: i16,
+    panose: [10]u8,
+    ul_unicode_range1: u32,
+    ul_unicode_range2: u32,
+    ul_unicode_range3: u32,
+    ul_unicode_range4: u32,
+    ach_vend_id: [4]u8,
+    fs_selection: u16,
+    us_first_char_index: u16,
+    us_last_char_index: u16,
+    s_typo_ascender: i16,
+    s_typo_descender: i16,
+    s_typo_line_gap: i16,
+    us_win_ascent: u16,
+    us_win_descent: u16,
 };
 
+const V1 = struct {
+    ul_code_page_range1: u32,
+    ul_code_page_range2: u32,
+};
+
+const V2 = struct {
+    sx_height: i16,
+    s_cap_height: i16,
+    us_default_char: u16,
+    us_break_char: u16,
+    us_max_context: u16,
+};
+
+const V3 = struct {};
+
+const V4 = struct {};
+
+const V5 = struct {
+    us_lower_optical_point_size: u16,
+    us_upper_optical_point_size: u16,
+};
+
+fn parse(ptr: *anyopaque) anyerror!void {
+    const self: *Self = @ptrCast(@alignCast(ptr));
+    self.version = try Version.form_u16(try self.byte_reader.read_u16_be());
+
+    const raw_version = self.version.to_u16();
+
+    if (raw_version >= 0) {
+        self.v0_data = try self.parse_v0();
+    }
+
+    if (raw_version >= 1) {
+        self.v1_data = try self.parse_v1();
+    }
+
+    if (raw_version >= 2) {
+        self.v2_data = try self.parse_v2();
+    }
+
+    if (raw_version >= 3) {
+        self.v3_data = V3{};
+    }
+
+    if (raw_version >= 4) {
+        self.v4_data = V4{};
+    }
+
+    if (raw_version >= 5) {
+        self.v5_data = try self.parse_v5();
+    }
+}
+
+fn parse_v0(self: *Self) !V0 {
+    return V0{
+        .x_avg_char_width = try self.byte_reader.read_i16_be(),
+        .us_weight_class = try self.byte_reader.read_u16_be(),
+        .us_width_class = try self.byte_reader.read_u16_be(),
+        .fs_type = try self.byte_reader.read_u16_be(),
+        .y_subscript_x_size = try self.byte_reader.read_i16_be(),
+        .y_subscript_y_size = try self.byte_reader.read_i16_be(),
+        .y_subscript_x_offset = try self.byte_reader.read_i16_be(),
+        .y_subscript_y_offset = try self.byte_reader.read_i16_be(),
+        .y_superscript_x_size = try self.byte_reader.read_i16_be(),
+        .y_superscript_y_size = try self.byte_reader.read_i16_be(),
+        .y_superscript_x_offset = try self.byte_reader.read_i16_be(),
+        .y_superscript_y_offset = try self.byte_reader.read_i16_be(),
+        .y_strikeout_size = try self.byte_reader.read_i16_be(),
+        .y_strikeout_position = try self.byte_reader.read_i16_be(),
+        .s_family_class = try self.byte_reader.read_i16_be(),
+        .panose = @as([10]u8, (try self.byte_reader.read_bytes(10))[0..10].*),
+        .ul_unicode_range1 = try self.byte_reader.read_u32_be(),
+        .ul_unicode_range2 = try self.byte_reader.read_u32_be(),
+        .ul_unicode_range3 = try self.byte_reader.read_u32_be(),
+        .ul_unicode_range4 = try self.byte_reader.read_u32_be(),
+        .ach_vend_id = @as([4]u8, (try self.byte_reader.read_bytes(4))[0..4].*),
+        .fs_selection = try self.byte_reader.read_u16_be(),
+        .us_first_char_index = try self.byte_reader.read_u16_be(),
+        .us_last_char_index = try self.byte_reader.read_u16_be(),
+        .s_typo_ascender = try self.byte_reader.read_i16_be(),
+        .s_typo_descender = try self.byte_reader.read_i16_be(),
+        .s_typo_line_gap = try self.byte_reader.read_i16_be(),
+        .us_win_ascent = try self.byte_reader.read_u16_be(),
+        .us_win_descent = try self.byte_reader.read_u16_be(),
+    };
+}
+
+fn parse_v1(self: *Self) !V1 {
+    return V1{
+        .ul_code_page_range1 = try self.byte_reader.read_u32_be(),
+        .ul_code_page_range2 = try self.byte_reader.read_u32_be(),
+    };
+}
+
+fn parse_v2(self: *Self) !V2 {
+    return V2{
+        .sx_height = try self.byte_reader.read_i16_be(),
+        .s_cap_height = try self.byte_reader.read_i16_be(),
+        .us_default_char = try self.byte_reader.read_u16_be(),
+        .us_break_char = try self.byte_reader.read_u16_be(),
+        .us_max_context = try self.byte_reader.read_u16_be(),
+    };
+}
+
+fn parse_v5(self: *Self) !V5 {
+    return V5{
+        .us_lower_optical_point_size = try self.byte_reader.read_u16_be(),
+        .us_upper_optical_point_size = try self.byte_reader.read_u16_be(),
+    };
+}
+
+fn deinit(ptr: *anyopaque) void {
+    const self: *Self = @ptrCast(@alignCast(ptr));
+    self.allocator.destroy(self);
+}
+
 pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
-    return Os2Table.init(allocator, byte_reader, parsed_tables);
+    const self = try allocator.create(Self);
+    errdefer allocator.destroy(self);
+
+    self.* = undefined;
+    self.allocator = allocator;
+    self.byte_reader = byte_reader;
+    self.parsed_tables = parsed_tables;
+
+    return Table{
+        .ptr = self,
+        .vtable = &.{ .parse = parse, .deinit = deinit },
+    };
+}
+
+fn get_weight_class(self: *Self) ?u16 {
+    return if (self.v0_data) |data| data.us_weight_class else null;
+}
+
+fn get_width_class(self: *Self) ?u16 {
+    return if (self.v0_data) |data| data.us_width_class else null;
+}
+
+pub fn get_fs_type(self: *Self) ?u16 {
+    return if (self.v0_data) |data| data.fs_type else null;
+}
+
+pub fn get_typo_ascender(self: *Self) ?i16 {
+    return if (self.v0_data) |data| data.s_typo_ascender else null;
+}
+
+pub fn get_typo_descender(self: *Self) ?i16 {
+    return if (self.v0_data) |data| data.s_typo_descender else null;
+}
+
+pub fn get_typo_line_gap(self: *Self) ?i16 {
+    return if (self.v0_data) |data| data.s_typo_line_gap else null;
+}
+
+pub fn get_win_ascent(self: *Self) ?u16 {
+    return if (self.v0_data) |data| data.us_win_ascent else null;
+}
+
+pub fn get_win_descent(self: *Self) ?u16 {
+    return if (self.v0_data) |data| data.us_win_descent else null;
+}
+
+pub fn get_x_height(self: *Self) ?i16 {
+    return if (self.v2_data) |data| data.sx_height else null;
+}
+
+pub fn get_cap_height(self: *Self) ?i16 {
+    return if (self.v2_data) |data| data.s_cap_height else null;
 }
 
 test "parse os2 table" {
@@ -356,10 +350,10 @@ test "parse os2 table" {
     };
     var byte_reader = reader.ByteReader.init(buffer);
     var dummy_parsed_tables: ParsedTables = undefined;
-    const table = try Os2Table.init(allocator, &byte_reader, &dummy_parsed_tables);
+    const table = try init(allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
     try table.parse();
-    const os2_table = table.cast(Os2Table);
+    const os2_table = table.cast(Self);
     try std.testing.expect(os2_table.version == .v0_4);
 
     if (os2_table.v0_data) |v0| {

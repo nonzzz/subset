@@ -52,213 +52,207 @@ const STANDARD_NAMES = [_][]const u8{
     "scedilla",      "Cacute",        "cacute",           "Ccaron",         "ccaron",           "dcroat",
 };
 
-pub const PostTable = struct {
-    const Self = @This();
+const Self = @This();
 
-    allocator: Allocator,
-    byte_reader: *reader.ByteReader,
-    parsed_tables: *ParsedTables,
+allocator: Allocator,
+byte_reader: *reader.ByteReader,
+parsed_tables: *ParsedTables,
 
-    version: u32,
-    italic_angle: i32,
-    underline_position: i16,
-    underline_thickness: i16,
-    is_fixed_pitch: u32,
-    min_mem_type42: u32,
-    max_mem_type42: u32,
-    min_mem_type1: u32,
-    max_mem_type1: u32,
+version: u32,
+italic_angle: i32,
+underline_position: i16,
+underline_thickness: i16,
+is_fixed_pitch: u32,
+min_mem_type42: u32,
+max_mem_type42: u32,
+min_mem_type1: u32,
+max_mem_type1: u32,
 
-    v2_data: ?V2 = null,
+v2_data: ?V2 = null,
 
-    const V2 = struct {
-        num_glyphs: u16,
-        glyph_name_index: []u16,
-        string_data: []u8,
+const V2 = struct {
+    num_glyphs: u16,
+    glyph_name_index: []u16,
+    string_data: []u8,
 
-        fn deinit(self: *V2, allocator: Allocator) void {
-            allocator.free(self.glyph_name_index);
-            if (self.string_data.len > 0) {
-                allocator.free(self.string_data);
-            }
+    fn deinit(self: *V2, allocator: Allocator) void {
+        allocator.free(self.glyph_name_index);
+        if (self.string_data.len > 0) {
+            allocator.free(self.string_data);
         }
-        fn get_name(self: *const V2, custom_index: u16) ?[]const u8 {
-            var offset: usize = 0;
-            var current_index: u16 = 0;
+    }
+    fn get_name(self: *const V2, custom_index: u16) ?[]const u8 {
+        var offset: usize = 0;
+        var current_index: u16 = 0;
 
-            while (offset < self.string_data.len and current_index < custom_index) {
-                const length = self.string_data[offset];
-                offset += 1 + length;
-                current_index += 1;
-            }
-
-            if (offset >= self.string_data.len) return null;
-
+        while (offset < self.string_data.len and current_index < custom_index) {
             const length = self.string_data[offset];
-            if (offset + 1 + length > self.string_data.len) return null;
-
-            return self.string_data[offset + 1 .. offset + 1 + length];
-        }
-    };
-
-    const Error = error{
-        InvalidPostVersion,
-        DeprecatedPostVersion25,
-        OutOfMemory,
-    };
-
-    fn parse(ptr: *anyopaque) anyerror!void {
-        const self: *Self = @ptrCast(@alignCast(ptr));
-
-        self.version = try self.byte_reader.read_u32_be();
-        self.italic_angle = try self.byte_reader.read_i32_be();
-        self.underline_position = try self.byte_reader.read_i16_be();
-        self.underline_thickness = try self.byte_reader.read_i16_be();
-        self.is_fixed_pitch = try self.byte_reader.read_u32_be();
-        self.min_mem_type42 = try self.byte_reader.read_u32_be();
-        self.max_mem_type42 = try self.byte_reader.read_u32_be();
-        self.min_mem_type1 = try self.byte_reader.read_u32_be();
-        self.max_mem_type1 = try self.byte_reader.read_u32_be();
-
-        switch (self.version) {
-            0x00010000, 0x00030000 => {},
-            0x00020000 => {
-                self.v2_data = try self.parse_v2();
-            },
-            0x00025000 => {
-                return Error.DeprecatedPostVersion25;
-            },
-            else => {
-                return Error.InvalidPostVersion;
-            },
-        }
-    }
-
-    fn parse_v2(self: *Self) !V2 {
-        const num_glyphs = try self.byte_reader.read_u16_be();
-        const glyph_name_index = try self.allocator.alloc(u16, num_glyphs);
-        errdefer self.allocator.free(glyph_name_index);
-        for (glyph_name_index) |*index| {
-            index.* = try self.byte_reader.read_u16_be();
+            offset += 1 + length;
+            current_index += 1;
         }
 
-        // glyph name index range is 0-257 standard macintosh names,
-        // otherwise its a custom name index starting from 258 to 65535
-        var max_custom_index: u16 = 0;
-        var has_custom_names = false;
-        for (glyph_name_index) |index| {
-            if (index >= 258) {
-                const custom_index = index - 258;
-                max_custom_index = @max(max_custom_index, custom_index);
-                has_custom_names = true;
-            }
-        }
+        if (offset >= self.string_data.len) return null;
 
-        var string_data: []u8 = &.{};
+        const length = self.string_data[offset];
+        if (offset + 1 + length > self.string_data.len) return null;
 
-        if (has_custom_names) {
-            var string_list = std.ArrayList(u8).init(self.allocator);
-            errdefer string_list.deinit();
-            var custom_strings_read: u16 = 0;
-            while (custom_strings_read <= max_custom_index) {
-                const string_length = try self.byte_reader.read_u8();
-                const string_bytes = try self.byte_reader.read_bytes(string_length);
-
-                try string_list.append(string_length);
-                try string_list.appendSlice(string_bytes);
-                custom_strings_read += 1;
-            }
-            string_data = try string_list.toOwnedSlice();
-        }
-
-        return V2{
-            .num_glyphs = num_glyphs,
-            .glyph_name_index = glyph_name_index,
-            .string_data = string_data,
-        };
-    }
-
-    fn deinit(ptr: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(ptr));
-        if (self.v2_data) |*v2| {
-            v2.deinit(self.allocator);
-        }
-        self.allocator.destroy(self);
-    }
-
-    pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
-        const self = try allocator.create(Self);
-        errdefer allocator.destroy(self);
-
-        self.* = undefined;
-        self.allocator = allocator;
-        self.byte_reader = byte_reader;
-        self.parsed_tables = parsed_tables;
-        self.v2_data = null;
-
-        return Table{
-            .ptr = self,
-            .vtable = &.{ .parse = parse, .deinit = deinit },
-        };
-    }
-
-    pub fn get_version(self: *Self) u32 {
-        return self.version;
-    }
-
-    pub fn get_italic_angle(self: *Self) i32 {
-        return self.italic_angle;
-    }
-
-    pub fn get_underline_position(self: *Self) i16 {
-        return self.underline_position;
-    }
-
-    pub fn get_underline_thickness(self: *Self) i16 {
-        return self.underline_thickness;
-    }
-
-    pub fn is_monospace(self: *Self) bool {
-        return self.is_fixed_pitch != 0;
-    }
-
-    pub fn has_glyph_names(self: *Self) bool {
-        return self.version == 0x00010000 or self.version == 0x00020000;
-    }
-
-    pub fn get_num_glyphs(self: *Self) ?u16 {
-        return if (self.v2_data) |v2| v2.num_glyphs else null;
-    }
-
-    pub fn get_glyph_name(self: *Self, glyph_id: u16) ?[]const u8 {
-        switch (self.version) {
-            0x00010000 => {
-                if (glyph_id < STANDARD_NAMES.len) {
-                    return STANDARD_NAMES[glyph_id];
-                }
-                return null;
-            },
-            0x00020000 => {
-                if (self.v2_data) |v2| {
-                    if (glyph_id >= v2.num_glyphs) return null;
-
-                    const name_index = v2.glyph_name_index[glyph_id];
-                    if (name_index < 258) {
-                        return STANDARD_NAMES[name_index];
-                    } else {
-                        const custom_index = name_index - 258;
-                        return v2.get_name(custom_index);
-                    }
-                }
-                return null;
-            },
-            else => return null,
-        }
+        return self.string_data[offset + 1 .. offset + 1 + length];
     }
 };
 
+const Error = error{
+    InvalidPostVersion,
+    DeprecatedPostVersion25,
+    OutOfMemory,
+};
+
+fn parse(ptr: *anyopaque) anyerror!void {
+    const self: *Self = @ptrCast(@alignCast(ptr));
+
+    self.version = try self.byte_reader.read_u32_be();
+    self.italic_angle = try self.byte_reader.read_i32_be();
+    self.underline_position = try self.byte_reader.read_i16_be();
+    self.underline_thickness = try self.byte_reader.read_i16_be();
+    self.is_fixed_pitch = try self.byte_reader.read_u32_be();
+    self.min_mem_type42 = try self.byte_reader.read_u32_be();
+    self.max_mem_type42 = try self.byte_reader.read_u32_be();
+    self.min_mem_type1 = try self.byte_reader.read_u32_be();
+    self.max_mem_type1 = try self.byte_reader.read_u32_be();
+
+    switch (self.version) {
+        0x00010000, 0x00030000 => {},
+        0x00020000 => {
+            self.v2_data = try self.parse_v2();
+        },
+        0x00025000 => {
+            return Error.DeprecatedPostVersion25;
+        },
+        else => {
+            return Error.InvalidPostVersion;
+        },
+    }
+}
+
+fn parse_v2(self: *Self) !V2 {
+    const num_glyphs = try self.byte_reader.read_u16_be();
+    const glyph_name_index = try self.allocator.alloc(u16, num_glyphs);
+    errdefer self.allocator.free(glyph_name_index);
+    for (glyph_name_index) |*index| {
+        index.* = try self.byte_reader.read_u16_be();
+    }
+
+    // glyph name index range is 0-257 standard macintosh names,
+    // otherwise its a custom name index starting from 258 to 65535
+    var max_custom_index: u16 = 0;
+    var has_custom_names = false;
+    for (glyph_name_index) |index| {
+        if (index >= 258) {
+            const custom_index = index - 258;
+            max_custom_index = @max(max_custom_index, custom_index);
+            has_custom_names = true;
+        }
+    }
+
+    var string_data: []u8 = &.{};
+
+    if (has_custom_names) {
+        var string_list = std.ArrayList(u8).init(self.allocator);
+        errdefer string_list.deinit();
+        var custom_strings_read: u16 = 0;
+        while (custom_strings_read <= max_custom_index) {
+            const string_length = try self.byte_reader.read_u8();
+            const string_bytes = try self.byte_reader.read_bytes(string_length);
+
+            try string_list.append(string_length);
+            try string_list.appendSlice(string_bytes);
+            custom_strings_read += 1;
+        }
+        string_data = try string_list.toOwnedSlice();
+    }
+
+    return V2{
+        .num_glyphs = num_glyphs,
+        .glyph_name_index = glyph_name_index,
+        .string_data = string_data,
+    };
+}
+
+fn deinit(ptr: *anyopaque) void {
+    const self: *Self = @ptrCast(@alignCast(ptr));
+    if (self.v2_data) |*v2| {
+        v2.deinit(self.allocator);
+    }
+    self.allocator.destroy(self);
+}
+
 pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables: *ParsedTables) !Table {
-    return PostTable.init(allocator, byte_reader, parsed_tables);
+    const self = try allocator.create(Self);
+    errdefer allocator.destroy(self);
+
+    self.* = undefined;
+    self.allocator = allocator;
+    self.byte_reader = byte_reader;
+    self.parsed_tables = parsed_tables;
+    self.v2_data = null;
+
+    return Table{
+        .ptr = self,
+        .vtable = &.{ .parse = parse, .deinit = deinit },
+    };
+}
+
+pub fn get_version(self: *Self) u32 {
+    return self.version;
+}
+
+pub fn get_italic_angle(self: *Self) i32 {
+    return self.italic_angle;
+}
+
+pub fn get_underline_position(self: *Self) i16 {
+    return self.underline_position;
+}
+
+pub fn get_underline_thickness(self: *Self) i16 {
+    return self.underline_thickness;
+}
+
+pub fn is_monospace(self: *Self) bool {
+    return self.is_fixed_pitch != 0;
+}
+
+pub fn has_glyph_names(self: *Self) bool {
+    return self.version == 0x00010000 or self.version == 0x00020000;
+}
+
+pub fn get_num_glyphs(self: *Self) ?u16 {
+    return if (self.v2_data) |v2| v2.num_glyphs else null;
+}
+
+pub fn get_glyph_name(self: *Self, glyph_id: u16) ?[]const u8 {
+    switch (self.version) {
+        0x00010000 => {
+            if (glyph_id < STANDARD_NAMES.len) {
+                return STANDARD_NAMES[glyph_id];
+            }
+            return null;
+        },
+        0x00020000 => {
+            if (self.v2_data) |v2| {
+                if (glyph_id >= v2.num_glyphs) return null;
+
+                const name_index = v2.glyph_name_index[glyph_id];
+                if (name_index < 258) {
+                    return STANDARD_NAMES[name_index];
+                } else {
+                    const custom_index = name_index - 258;
+                    return v2.get_name(custom_index);
+                }
+            }
+            return null;
+        },
+        else => return null,
+    }
 }
 
 test "parse post table v1.0" {
@@ -286,11 +280,11 @@ test "parse post table v1.0" {
 
     var byte_reader = reader.ByteReader.init(buffer);
     var dummy_parsed_tables: ParsedTables = undefined;
-    var table = try PostTable.init(allocator, &byte_reader, &dummy_parsed_tables);
+    var table = try init(allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
 
     try table.parse();
-    const post_table = table.cast(PostTable);
+    const post_table = table.cast(Self);
 
     try std.testing.expectEqual(@as(u32, 0x00010000), post_table.get_version());
     try std.testing.expectEqual(@as(i16, -100), post_table.get_underline_position());
@@ -343,11 +337,11 @@ test "parse post table v2.0" {
 
     var byte_reader = reader.ByteReader.init(buffer);
     var dummy_parsed_tables: ParsedTables = undefined;
-    var table = try PostTable.init(allocator, &byte_reader, &dummy_parsed_tables);
+    var table = try init(allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
 
     try table.parse();
-    const post_table = table.cast(PostTable);
+    const post_table = table.cast(Self);
 
     try std.testing.expectEqual(@as(u32, 0x00020000), post_table.get_version());
     try std.testing.expectEqual(@as(i16, -100), post_table.get_underline_position());
@@ -378,8 +372,8 @@ test "parse post table v2.5 deprecated" {
 
     var byte_reader = reader.ByteReader.init(buffer);
     var dummy_parsed_tables: ParsedTables = undefined;
-    var table = try PostTable.init(allocator, &byte_reader, &dummy_parsed_tables);
+    var table = try init(allocator, &byte_reader, &dummy_parsed_tables);
     defer table.deinit();
 
-    try std.testing.expectError(PostTable.Error.DeprecatedPostVersion25, table.parse());
+    try std.testing.expectError(Error.DeprecatedPostVersion25, table.parse());
 }
