@@ -2,6 +2,7 @@ const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
 const ParsedTables = @import("../parser.zig").ParsedTables;
+const Error = @import("./errors.zig").Error;
 
 const Allocator = std.mem.Allocator;
 
@@ -98,12 +99,6 @@ const V2 = struct {
 
         return self.string_data[offset + 1 .. offset + 1 + length];
     }
-};
-
-const Error = error{
-    InvalidPostVersion,
-    DeprecatedPostVersion25,
-    OutOfMemory,
 };
 
 fn parse(ptr: *anyopaque) anyerror!void {

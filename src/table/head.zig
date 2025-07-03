@@ -2,6 +2,7 @@ const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
 const ParsedTables = @import("../parser.zig").ParsedTables;
+const Error = @import("./errors.zig").Error;
 
 const Allocator = std.mem.Allocator;
 
@@ -60,10 +61,6 @@ lowest_rec_ppem: u16,
 font_direction_hint: i16,
 index_to_loc_format: i16,
 glyph_data_format: i16,
-
-const Error = error{
-    InvalidHeadTable,
-};
 
 fn parse(ptr: *anyopaque) anyerror!void {
     const self: *Self = @ptrCast(@alignCast(ptr));

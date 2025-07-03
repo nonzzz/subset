@@ -2,6 +2,7 @@ const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
 const ParsedTables = @import("../parser.zig").ParsedTables;
+const Error = @import("./errors.zig").Error;
 
 const Maxp = @import("./maxp.zig");
 const Hhea = @import("./hhea.zig");
@@ -9,11 +10,6 @@ const Hhea = @import("./hhea.zig");
 const Allocator = std.mem.Allocator;
 
 const Self = @This();
-
-const Error = error{
-    MissingHheaTable,
-    MissingMaxpTable,
-};
 
 allocator: Allocator,
 byte_reader: *reader.ByteReader,
@@ -29,8 +25,8 @@ pub const LongHorMetric = packed struct {
 
 fn parse(ptr: *anyopaque) !void {
     const self: *Self = @ptrCast(@alignCast(ptr));
-    const hhea_table = self.parsed_tables.hhea orelse return error.MissingHheaTable;
-    const maxp_table = self.parsed_tables.maxp orelse return error.MissingMaxpTable;
+    const hhea_table = self.parsed_tables.hhea orelse return Error.MissingHheaTable;
+    const maxp_table = self.parsed_tables.maxp orelse return Error.MissingMaxpTable;
 
     const hhea = hhea_table.cast(Hhea);
     const maxp = maxp_table.cast(Maxp);
@@ -108,7 +104,7 @@ test "parse hmtx table" {
     defer hmtx_table.deinit();
 
     hmtx_table.parse() catch |err| {
-        try std.testing.expect(err == error.MissingHheaTable);
+        try std.testing.expect(err == Error.MissingHheaTable);
         return;
     };
 }

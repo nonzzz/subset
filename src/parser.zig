@@ -101,19 +101,17 @@ pub const ParsedTables = struct {
     name: ?Table = null,
     hmtx: ?Table = null,
     cmap: ?Table = null,
+    loca: ?Table = null,
 
     pub inline fn is_parsed(self: *Self, tag: TableTag) bool {
-        return switch (tag) {
-            .head => self.head != null,
-            .hhea => self.hhea != null,
-            .maxp => self.maxp != null,
-            .os2 => self.os2 != null,
-            .post => self.post != null,
-            .name => self.name != null,
-            .hmtx => self.hmtx != null,
-            .cmap => self.cmap != null,
-            else => false,
-        };
+        inline for (std.meta.fields(Self)) |field| {
+            if (field.type == ?Table) {
+                if (@field(TableTag, field.name) == tag) {
+                    return @field(self, field.name) != null;
+                }
+            }
+        }
+        return false;
     }
 
     pub fn deinit(self: *Self) void {
@@ -242,6 +240,11 @@ pub const Parser = struct {
                 try hmtx_table.parse();
                 self.parsed_tables.hmtx = hmtx_table;
             },
+            .loca => {
+                var loca_table = try table.Loca.init(self.allocator, &self.reader, &self.parsed_tables);
+                try loca_table.parse();
+                self.parsed_tables.loca = loca_table;
+            },
             else => {
                 // TODO: Implement parsing for other tables
             },
@@ -269,6 +272,7 @@ pub const Parser = struct {
                 }
                 continue;
             }
+
             try self.parse_table_recursive(dep_tag);
         }
         if (self.find_table_record(tag)) |record| {
@@ -328,4 +332,9 @@ test "Parser" {
     //         std.debug.print("{s}\n", .{name_table.get_by_name_id(record.name_id) orelse "N/A"});
     //     }
     // }
+
+    if (parser.parsed_tables.loca) |loca_table| {
+        const loca = loca_table.cast(table.Loca);
+        std.debug.print("LOCA offsets: {any}\n", .{loca.offsets});
+    }
 }

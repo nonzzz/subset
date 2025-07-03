@@ -2,6 +2,7 @@ const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
 const ParsedTables = @import("../parser.zig").ParsedTables;
+const Error = @import("./errors.zig").Error;
 
 const Allocator = std.mem.Allocator;
 
@@ -29,10 +30,6 @@ reserved3: i16,
 reserved4: i16,
 metric_data_format: i16,
 number_of_hmetrics: u16,
-
-const Error = error{
-    InvalidHheaTable,
-};
 
 pub fn parse(ptr: *anyopaque) anyerror!void {
     const self: *Self = @ptrCast(@alignCast(ptr));

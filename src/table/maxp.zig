@@ -2,6 +2,7 @@ const std = @import("std");
 const reader = @import("../byte_read.zig");
 const Table = @import("../table.zig");
 const ParsedTables = @import("../parser.zig").ParsedTables;
+const Error = @import("./errors.zig").Error;
 
 const Allocator = std.mem.Allocator;
 
@@ -31,10 +32,6 @@ max_size_of_instructions: ?u16 = null,
 max_component_elements: ?u16 = null,
 max_component_depth: ?u16 = null,
 
-const Error = error{
-    InvalidMaxpVersion,
-};
-
 fn parse(ptr: *anyopaque) anyerror!void {
     const self: *Self = @ptrCast(@alignCast(ptr));
     const version = try self.byte_reader.read_u32_be();
@@ -61,7 +58,7 @@ fn parse(ptr: *anyopaque) anyerror!void {
             self.max_component_depth = try self.byte_reader.read_u16_be();
         },
         else => {
-            return error.InvalidMaxpVersion;
+            return Error.InvalidMaxpVersion;
         },
     }
 }
