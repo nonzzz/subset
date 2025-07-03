@@ -7,6 +7,7 @@ pub const Error = error{
     InvalidPostVersion,
     InvalidGlyfTable,
     DeprecatedPostVersion25,
+    UnsupportedCmapFormat,
 
     MissingHheaTable,
     MissingMaxpTable,

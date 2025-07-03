@@ -60,12 +60,12 @@ pub const Version = enum(u16) {
     v0_1 = 0x0001,
     v0_0 = 0x0000,
 
-    inline fn form_u16(b: u16) !Version {
+    pub inline fn form_u16(b: u16) !Version {
         return std.meta.intToEnum(Version, b) catch {
             return Error.InvalidOs2Version;
         };
     }
-    inline fn to_u16(self: Version) u16 {
+    pub inline fn to_u16(self: Version) u16 {
         return @intFromEnum(self);
     }
 };

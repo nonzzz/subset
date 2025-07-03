@@ -23,6 +23,11 @@ pub const LongHorMetric = packed struct {
     lsb: i16,
 };
 
+pub const GlyphMetrics = struct {
+    advance_width: u16,
+    left_side_bearing: i16,
+};
+
 fn parse(ptr: *anyopaque) !void {
     const self: *Self = @ptrCast(@alignCast(ptr));
     const hhea_table = self.parsed_tables.hhea orelse return Error.MissingHheaTable;
@@ -82,14 +87,40 @@ pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables
     };
 }
 
-pub fn get_advance_width(self: *Self, glyph_index: u16) void {
-    _ = self;
-    _ = glyph_index;
+pub fn get_metrics(self: *Self, glyph_index: u16) GlyphMetrics {
+    if (glyph_index < self.h_metrics.len) {
+        const metric = self.h_metrics[glyph_index];
+        return GlyphMetrics{
+            .advance_width = metric.advance_width,
+            .left_side_bearing = metric.lsb,
+        };
+    } else {
+        const last_advance_width = if (self.h_metrics.len > 0)
+            self.h_metrics[self.h_metrics.len - 1].advance_width
+        else
+            0;
+
+        const lsb_index = glyph_index - @as(u16, @intCast(self.h_metrics.len));
+        const left_side_bearing = if (lsb_index < self.left_side_bearings.len)
+            self.left_side_bearings[lsb_index]
+        else
+            0;
+
+        return GlyphMetrics{
+            .advance_width = last_advance_width,
+            .left_side_bearing = left_side_bearing,
+        };
+    }
 }
 
-pub fn get_left_side_bearing(self: *Self, glyph_index: u16) void {
-    _ = self;
-    _ = glyph_index;
+pub fn get_advance_width(self: *Self, glyph_index: u16) u16 {
+    const metrics = self.get_metrics(glyph_index);
+    return metrics.advance_width;
+}
+
+pub fn get_left_side_bearing(self: *Self, glyph_index: u16) i16 {
+    const metrics = self.get_metrics(glyph_index);
+    return metrics.left_side_bearing;
 }
 
 test "parse hmtx table" {

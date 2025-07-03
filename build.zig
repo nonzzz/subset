@@ -38,7 +38,7 @@ fn build_wasm_bindings(b: *std.Build, step_wasm: *std.Build.Step) void {
     });
 
     const ttf_mod = b.addModule("ttf", .{
-        .root_source_file = b.path("src/parser.zig"),
+        .root_source_file = b.path("src/lib.zig"),
     });
     wasm_generate.root_module.addImport("ttf", ttf_mod);
 
