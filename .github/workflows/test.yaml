@@ -5,6 +5,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - run: git lfs install
+      - run: git lfs pull
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
