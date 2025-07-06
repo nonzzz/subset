@@ -3,7 +3,7 @@ import fs from 'fs'
 import { bench, group, run } from 'mitata'
 import opentype from 'opentype.js'
 import path from 'path'
-import { createSubsetEngine } from './bindings/wasm/javascript'
+import { createSubsetEngine } from './bindings/javascript/wasm'
 
 const wasmPath = path.join(__dirname, 'zig-out', 'ttf.wasm')
 const ttfPath = path.join(__dirname, 'fonts', 'LXGWBright-Light.ttf')
@@ -32,7 +32,7 @@ group('get glyph id for codepoint', () => {
 })
 
 group('get glyph name', () => {
-  const glyphIds = Array.from({ length: 10000 }, (_, i) => i + 1)
+  const glyphIds = Array.from({ length: 100 }, (_, i) => i + 1)
   bench('WASM', () => {
     for (const id of glyphIds) {
       wasmEngine.getGlyphName(id)
