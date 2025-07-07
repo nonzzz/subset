@@ -1,3 +1,4 @@
+```bash
 clk: ~3.74 GHz
 cpu: Apple M3
 runtime: node 22.3.0 (arm64-darwin)
@@ -23,3 +24,4 @@ WASM                         444.97 ns/iter 446.59 ns         █▄
 opentype.js                  634.34 ns/iter 636.48 ns             █        
                     (613.16 ns … 683.68 ns) 645.98 ns            ██▆▃      
                     (  0.10  b … 946.05  b)   3.97  b ▁▂▂▁▂▁▁▁▂▁▂████▇▅▅▃▂▁
+```

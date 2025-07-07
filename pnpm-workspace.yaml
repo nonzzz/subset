@@ -1,0 +1,6 @@
+packages:
+  - npm/**/*
+
+onlyBuiltDependencies:
+  - "@swc/core"
+  - dprint
