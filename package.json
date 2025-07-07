@@ -2,27 +2,30 @@
   "description": "A tool to extract ttf/otf subsets.",
   "scripts": {
     "bench": "tsx bench.ts",
-    "build:wasm": "zig build wasm && rollup --config ./bindings/javascript/rollup.config.ts --configPlugin swc3"
+    "build:wasm": "zig build wasm && rollup --config ./bindings/javascript/rollup.config.ts --configPlugin swc3",
+    "dev:web": "vite --config ./web/vite.config.mts",
+    "build:web": "pnpm run build:wasm && vite build --config ./web/vite.config.mts"
   },
   "keywords": [],
   "author": "Kanno",
   "license": "MIT",
   "devDependencies": {
+    "@swc/core": "^1.12.9",
     "@types/node": "^24.0.4",
     "@types/opentype.js": "^1.3.8",
     "dprint": "0.46.0",
     "eslint": "^9.29.0",
     "eslint-config-kagura": "^3.0.1",
     "mitata": "^1.0.34",
-    "opentype.js": "^1.3.4",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3",
     "node-api-headers": "^1.5.0",
+    "opentype.js": "^1.3.4",
     "rollup": "^4.44.2",
     "rollup-plugin-dts": "^6.2.1",
-    "@swc/core": "^1.12.9",
     "rollup-plugin-swc3": "^0.12.1",
-    "ttf.zig": "workspace:*"
+    "tsx": "^4.20.3",
+    "ttf.zig": "workspace:*",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.2"
   },
   "packageManager": "pnpm@10.10.0+sha512.d615db246fe70f25dcfea6d8d73dee782ce23e2245e3c4f6f888249fb568149318637dca73c2c5c8ef2a4ca0d5657fb9567188bfab47f566d1ee6ce987815c39"
 }
