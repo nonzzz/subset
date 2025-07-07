@@ -9,11 +9,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Dependencies
-        run: make
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
-          node-version: 21
+          lfs: true
+          node-version: 22.3.0
+      - run: git lfs install
+      - run: git lfs pull
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
       - name: Build site
         run: |
           npm install -g corepack@latest --force
@@ -25,6 +29,6 @@ jobs:
         uses: JamesIves/github-pages-deploy-action@v4.4.3
         with:
           branch: gh-page
-          folder: web/dist/client
+          folder: web/dist
           single-commit: true
           clean: true
