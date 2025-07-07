@@ -1,0 +1,30 @@
+name: Deploy Site
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy-site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dependencies
+        run: make
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 21
+      - name: Build site
+        run: |
+          npm install -g corepack@latest --force
+          corepack enable
+          pnpm install
+          pnpm run build:web
+
+      - name: Deploy site
+        uses: JamesIves/github-pages-deploy-action@v4.4.3
+        with:
+          branch: gh-page
+          folder: web/dist/client
+          single-commit: true
+          clean: true
