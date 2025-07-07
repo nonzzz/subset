@@ -4,7 +4,7 @@ let intsall = false
 let debounceTimer: number | undefined
 
 async function loadData() {
-  const response = await fetch('/LXGWBright-Light.ttf')
+  const response = await fetch('LXGWBright-Light.ttf')
   const arrayBuffer = await response.arrayBuffer()
   const fontData = new Uint8Array(arrayBuffer)
   const ok = ttf.loadFont(fontData)
