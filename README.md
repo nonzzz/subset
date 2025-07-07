@@ -8,7 +8,6 @@ WIP
 
 Before run this porject pls ensure that your local zig version is the latest stable version. I recommend using [`zvm`](https://github.com/tristanisham/zvm) to manager zig version.
 
-
 ### Notes for Developers
 
 - This project uses **Git LFS** to manage large files such as font files (`.ttf`, `.otf`) for testing.
@@ -23,7 +22,6 @@ Before run this porject pls ensure that your local zig version is the latest sta
   git lfs pull
   ```
 - Be aware that public Git LFS services (such as GitHub LFS) have storage and bandwidth limits.
-
 
 ### Specifications
 

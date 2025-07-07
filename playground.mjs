@@ -1,26 +1,11 @@
 import fs from 'fs'
 import path from 'path'
-import { createSubsetEngine } from './bindings/javascript/wasm'
+import { ttf } from 'ttf.zig'
 
-const wasmPath = path.join(__dirname, 'zig-out', 'ttf.wasm')
-const ttfPath = path.join(__dirname, 'fonts', 'LXGWBright-Light.ttf')
+const TTF_PATH = path.join(process.cwd(), 'fonts', 'LXGWBright-Light.ttf')
 
 function main() {
-  if (!fs.existsSync(wasmPath)) {
-    throw new Error(`WASM file not found at ${wasmPath}`)
-  }
-
-  if (!fs.existsSync(ttfPath)) {
-    throw new Error(`TTF file not found at ${ttfPath}`)
-  }
-
-  const fontData = new Uint8Array(fs.readFileSync(ttfPath))
-
-  const binary = fs.readFileSync(wasmPath)
-
-  const engine = createSubsetEngine(binary)
-
-  const state = engine.loadFont(fontData)
+  const state = ttf.loadFont(new Uint8Array(fs.readFileSync(TTF_PATH)))
 
   if (!state) {
     console.error('Failed to load font')
@@ -28,7 +13,7 @@ function main() {
   }
   console.log('✅ Font loaded successfully!')
 
-  const metrics = engine.getFontMetrics()
+  const metrics = ttf.getFontMetrics()
 
   if (metrics) {
     console.log('\n📊 Font Metrics:')
@@ -40,10 +25,10 @@ function main() {
     console.log(`  Bounds: (${metrics.xMin}, ${metrics.yMin}) to (${metrics.xMax}, ${metrics.yMax})`)
   }
 
-  console.log(`\n📏 Number of glyphs: ${engine.getNumGlyphs()}`)
-  console.log(`🔤 Is monospace: ${engine.isMonospace()}`)
+  console.log(`\n📏 Number of glyphs: ${ttf.getNumGlyphs()}`)
+  console.log(`🔤 Is monospace: ${ttf.isMonospace()}`)
 
-  const familyName = engine.getFontName(1)
+  const familyName = ttf.getFontName(1)
 
   if (familyName) {
     console.log(`📝 Font Family: ${familyName}`)
@@ -54,17 +39,17 @@ function main() {
   for (const char of testText) {
     const codePoint = char.codePointAt(0)
     if (codePoint !== undefined) {
-      const glyphId = engine.getGlyphIdForCodepoint(codePoint)
+      const glyphId = ttf.getGlyphIdForCodepoint(codePoint)
       console.log(`Character: '${char}' (U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}) - Glyph ID: ${glyphId}`)
       if (glyphId > 0) {
-        const glyphInfo = engine.getGlyphInfo(glyphId)
+        const glyphInfo = ttf.getGlyphInfo(glyphId)
         if (glyphInfo) {
           console.log(`  Advance Width: ${glyphInfo.advanceWidth}`)
           console.log(`  Left Side Bearing: ${glyphInfo.leftSideBearing}`)
           console.log(`  Has Outline: ${glyphInfo.hasOutline}`)
         }
 
-        const glyphName = engine.getGlyphName(glyphId)
+        const glyphName = ttf.getGlyphName(glyphId)
         if (glyphName) {
           console.log(`  Glyph Name: ${glyphName}`)
         }
@@ -72,7 +57,6 @@ function main() {
     }
   }
 
-  engine.destroy()
+  ttf.destroy()
 }
-
 main()
