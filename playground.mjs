@@ -1,12 +1,12 @@
-import fs from 'fs'
+// import fs from 'fs'
 import path from 'path'
 import { ttf } from 'ttf.zig'
 
 const TTF_PATH = path.join(process.cwd(), 'fonts', 'LXGWBright-Light.ttf')
 
-function main() {
-  const state = ttf.loadFont(new Uint8Array(fs.readFileSync(TTF_PATH)))
-
+async function main() {
+  // const state = ttf.loadFont(new Uint8Array(fs.readFileSync(TTF_PATH)))
+  const state = await ttf.loadFile(TTF_PATH)
   if (!state) {
     console.error('Failed to load font')
     return

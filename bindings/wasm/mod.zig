@@ -38,13 +38,13 @@ export fn load_font_from_buffer(ptr: [*]const u8, len: u32) ?*FontReaderHandle {
     return @ptrCast(reader);
 }
 
-extern fn js_read_file(path_ptr: [*]const u8, path_len: u32, out_ptr: *[*]u8, out_len: *u32) bool;
+extern "env" fn host_read_file(path_ptr: [*]const u8, path_len: u32, out_ptr: *[*]u8, out_len: *u32) bool;
 
 export fn load_font_from_file(path_ptr: [*]const u8, path_len: u32) ?*FontReaderHandle {
     var data_ptr: [*]u8 = undefined;
     var data_len: u32 = undefined;
 
-    if (!js_read_file(path_ptr, path_len, &data_ptr, &data_len)) {
+    if (!host_read_file(path_ptr, path_len, &data_ptr, &data_len)) {
         return null;
     }
 
@@ -237,7 +237,7 @@ export fn create_subset_from_text(font_ptr: [*]const u8, font_len: u32, text_ptr
     return .success;
 }
 
-extern fn js_write_file(path_ptr: [*]const u8, path_len: u32, data_ptr: [*]const u8, data_len: u32) bool;
+extern "env" fn host_write_file(path_ptr: [*]const u8, path_len: u32, data_ptr: [*]const u8, data_len: u32) bool;
 
 export fn save_subset_to_file(subset_handle: ?*SubsetHandle, path_ptr: [*]const u8, path_len: u32) ErrorCode {
     const subset: *lib.Subset = @ptrCast(@alignCast(subset_handle orelse return .invalid_pointer));
@@ -245,7 +245,7 @@ export fn save_subset_to_file(subset_handle: ?*SubsetHandle, path_ptr: [*]const 
     const font_data = subset.generate_subset() catch return .allocation_failed;
     defer subset.allocator.free(font_data);
 
-    if (js_write_file(path_ptr, path_len, font_data.ptr, @intCast(font_data.len))) {
+    if (host_write_file(path_ptr, path_len, font_data.ptr, @intCast(font_data.len))) {
         return .success;
     } else {
         return .parse_failed;

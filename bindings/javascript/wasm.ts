@@ -44,6 +44,11 @@ export interface WASMInstance {
   get_error_message: (error_code: number, buffer_ptr: number, buffer_len: number) => number
 }
 
+export interface WASMZigEnv extends WebAssembly.ModuleImports {
+  host_read_file: (pathPtr: number, pathLen: number, outPtrPtr: number, outLenPtr: number) => boolean
+  host_write_file: (pathPtr: number, pathLen: number, dataPtr: number, dataLen: number) => boolean
+}
+
 export const ERR_CODE = {
   SUCCESS: 0,
   INVALID_POINTER: 1,
@@ -74,6 +79,22 @@ export interface GlyphInfo {
   hasOutline: boolean
 }
 
+const IS_NODE_PLATFORM = typeof process !== 'undefined' && process.versions?.node
+
+let FS_WRAP: Promise<typeof import('fs')> | null = null
+let fs: typeof import('fs') | null = null
+
+if (IS_NODE_PLATFORM) {
+  try {
+    FS_WRAP = import('fs').then((fsModule) => fsModule.default || fsModule)
+  } catch {
+  }
+}
+
+const decoder = new TextDecoder()
+
+const encoder = new TextEncoder()
+
 export class FontSubset {
   private instance: WASMInstance
   private readerHandle: number | null = null
@@ -94,6 +115,20 @@ export class FontSubset {
 
     this.instance.free_memory(ptr, fontData.length)
 
+    return this.readerHandle !== null
+  }
+
+  async loadFile(path: string): Promise<boolean> {
+    if (!fs && IS_NODE_PLATFORM && FS_WRAP) {
+      fs = await FS_WRAP
+    }
+    const pathData = encoder.encode(path)
+    const pathPtr = this.instance.allocate_memory(pathData.length)
+    if (pathPtr === null) { return false }
+    const memory = new Uint8Array(this.instance.memory.buffer)
+    memory.set(pathData, pathPtr)
+    this.readerHandle = this.instance.load_font_from_file(pathPtr, pathData.length)
+    this.instance.free_memory(pathPtr, pathData.length)
     return this.readerHandle !== null
   }
 
@@ -348,12 +383,53 @@ export function createSubsetEngine(binary: Uint8Array): FontSubset {
   }
 
   const compiledWASM = new WebAssembly.Module(binary)
-  const env = {
-    js_read_file: () => {
-      return false
+  const env = <WASMZigEnv> {
+    host_read_file: (pathPtr: number, pathLen: number, outPtrPtr: number, outLenPtr: number) => {
+      try {
+        if (!WASM_INSTANCE) { return 0 }
+        const memory = new Uint8Array(WASM_INSTANCE.memory.buffer)
+        const pathBytes = memory.slice(pathPtr, pathPtr + pathLen)
+        const path = decoder.decode(pathBytes)
+
+        if (IS_NODE_PLATFORM && fs) {
+          const buffer = fs.readFileSync(path)
+          const fileData = new Uint8Array(buffer)
+
+          const dataPtr = WASM_INSTANCE.allocate_memory(fileData.length)
+          if (dataPtr === null) {
+            return false
+          }
+
+          const wasmMemory = new Uint8Array(WASM_INSTANCE.memory.buffer)
+          wasmMemory.set(fileData, dataPtr)
+
+          const outPtrView = new Uint32Array(WASM_INSTANCE.memory.buffer, outPtrPtr, 1)
+          const outLenView = new Uint32Array(WASM_INSTANCE.memory.buffer, outLenPtr, 1)
+
+          outPtrView[0] = dataPtr
+          outLenView[0] = fileData.length
+
+          return true
+        }
+        return false
+      } catch {
+        return false
+      }
     },
-    js_write_file: () => {
-      return false
+    host_write_file: (pathPtr: number, pathLen: number, dataPtr: number, dataLen: number) => {
+      try {
+        if (!WASM_INSTANCE) { return false }
+        const memory = new Uint8Array(WASM_INSTANCE.memory.buffer)
+        const pathBytes = memory.slice(pathPtr, pathPtr + pathLen)
+        const path = decoder.decode(pathBytes)
+        const data = memory.slice(dataPtr, dataPtr + dataLen)
+        if (IS_NODE_PLATFORM && fs) {
+          fs.writeFileSync(path, data)
+          return true
+        }
+      } catch {
+        return false
+      }
     }
   }
   WASM_INSTANCE = new WebAssembly.Instance(compiledWASM, { env }).exports as unknown as WASMInstance
