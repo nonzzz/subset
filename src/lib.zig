@@ -1,9 +1,11 @@
 const std = @import("std");
 const mod = @import("./parser.zig");
 const table = @import("./table/mod.zig");
+const Table = @import("./table.zig");
 
 const Parser = mod.Parser;
 const TableTag = mod.TableTag;
+const fs = std.fs;
 const Allocator = std.mem.Allocator;
 
 pub const GlyphInfo = struct {
@@ -178,7 +180,94 @@ pub const Subset = struct {
     }
 
     pub fn generate_subset(self: *Self) ![]u8 {
-        return try self.allocator.alloc(u8, 0);
+        const selected_glyphs = try self.get_selected_glyphs();
+        defer self.allocator.free(selected_glyphs);
+
+        var glyph_set = std.HashMap(u16, void, std.hash_map.AutoContext(u16), std.hash_map.default_max_load_percentage).init(self.allocator);
+        defer glyph_set.deinit();
+
+        // .notdef
+        try glyph_set.put(0, {});
+        for (selected_glyphs) |glyph_id| {
+            try glyph_set.put(glyph_id, {});
+        }
+
+        var new_glyphs = std.ArrayList(u16).init(self.allocator);
+        defer new_glyphs.deinit();
+
+        var glyph_iterator = glyph_set.iterator();
+        while (glyph_iterator.next()) |entry| {
+            try new_glyphs.append(entry.key_ptr.*);
+        }
+
+        std.sort.heap(u16, new_glyphs.items, {}, std.sort.asc(u16));
+
+        var glyph_id_map = std.HashMap(u16, u16, std.hash_map.AutoContext(u16), std.hash_map.default_max_load_percentage).init(self.allocator);
+        defer glyph_id_map.deinit();
+
+        for (new_glyphs.items, 0..) |old_glyph_id, new_index| {
+            try glyph_id_map.put(old_glyph_id, @intCast(new_index));
+        }
+
+        var buffer = std.ArrayList(u8).init(self.allocator);
+        errdefer buffer.deinit();
+
+        // https://learn.microsoft.com/en-us/typography/opentype/spec/otff#organization-of-an-opentype-font
+        // copy head info
+        try self.parser.reader.seek_to(0);
+
+        const all_table_tags = [_]mod.TableTag{
+            .head, .hhea, .maxp, .os2, .cmap, .name, .post, .hmtx, .loca, .glyf,
+        };
+        const table_count: u16 = all_table_tags.len;
+        try buffer.appendSlice(&std.mem.toBytes(try self.parser.reader.read_u32_be()));
+        try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, all_table_tags.len)));
+
+        const search_range = (@as(u16, 1) << @intCast(std.math.log2(table_count))) * 16;
+        const entry_selector = std.math.log2(search_range / 16);
+        const range_shift = table_count * 16 - search_range;
+
+        try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, search_range)));
+        try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, @intCast(entry_selector))));
+        try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, range_shift)));
+
+        // tableRecords
+        // I'm not sure the table records is a sortable array, but we can using the parsed offset to sort us new tables.
+        const TagWithOffset = struct {
+            tag: mod.TableTag,
+            offset: u32,
+        };
+        var tags_with_offsets = std.ArrayList(TagWithOffset).init(self.allocator);
+        defer tags_with_offsets.deinit();
+
+        for (all_table_tags) |tag| {
+            for (self.parser.table_records.items) |table_record| {
+                if (table_record.tag == tag) {
+                    try tags_with_offsets.append(TagWithOffset{
+                        .tag = tag,
+                        .offset = table_record.offset,
+                    });
+                    break;
+                }
+            }
+        }
+
+        std.sort.heap(TagWithOffset, tags_with_offsets.items, {}, struct {
+            fn lessThan(context: void, a: TagWithOffset, b: TagWithOffset) bool {
+                _ = context;
+                return a.offset < b.offset;
+            }
+        }.lessThan);
+
+        for (tags_with_offsets.items) |sorted_record| {
+            if (self.parser.parsed_tables.get_table(sorted_record.tag)) |table_data| {
+                try write_table_record_typed(&buffer, sorted_record.tag, &table_data);
+            } else {
+                continue;
+            }
+        }
+
+        return try buffer.toOwnedSlice();
     }
 };
 
@@ -254,4 +343,69 @@ pub fn get_font_info_from_file(allocator: Allocator, font_path: []const u8) !Fon
 
 pub fn get_font_info_from_buffer(allocator: Allocator, font_data: []const u8) !FontReader {
     return FontReader.init(allocator, font_data);
+}
+
+pub fn write_table_records(buffer: *std.ArrayList(u8), comptime cast_tag: type, table_data: *const Table) !void {
+    const cast_table = table_data.cast(cast_tag);
+    inline for (std.meta.fields(@TypeOf(cast_table.*))) |field| {
+        const field_value = @field(cast_table, field.name);
+
+        switch (field.type) {
+            u16 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, field_value))),
+            u32 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u32, field_value))),
+            i16 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(i16, field_value))),
+            i32 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(i32, field_value))),
+            i64 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(i64, field_value))),
+            table.Head.MacStyle => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, field_value.to_u16()))),
+            else => {
+                continue;
+            },
+        }
+    }
+}
+
+fn getTableType(comptime tag: mod.TableTag) type {
+    return switch (tag) {
+        .head => table.Head,
+        .hhea => table.Hhea,
+        .maxp => table.Maxp,
+        .os2 => table.Os2,
+        .cmap => table.Cmap,
+        .name => table.Name,
+        .post => table.Post,
+        .hmtx => table.Hmtx,
+        .loca => table.Loca,
+        .glyf => table.Glyf,
+    };
+}
+
+pub fn write_table_record_typed(buffer: *std.ArrayList(u8), tag: mod.TableTag, table_data: *const Table) !void {
+    switch (tag) {
+        .head => try write_table_records(buffer, table.Head, table_data),
+        .hhea => try write_table_records(buffer, table.Hhea, table_data),
+        .maxp => try write_table_records(buffer, table.Maxp, table_data),
+        .os2 => try write_table_records(buffer, table.Os2, table_data),
+        .cmap => try write_table_records(buffer, table.Cmap, table_data),
+        .name => try write_table_records(buffer, table.Name, table_data),
+        .post => try write_table_records(buffer, table.Post, table_data),
+        .hmtx => try write_table_records(buffer, table.Hmtx, table_data),
+        .loca => try write_table_records(buffer, table.Loca, table_data),
+        .glyf => try write_table_records(buffer, table.Glyf, table_data),
+        else => {
+            // Unsupported table type, skip writing
+            return;
+        },
+    }
+}
+
+test "create subset from file" {
+    const allocator = std.testing.allocator;
+    const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "LXGWBright-Light.ttf" }) catch unreachable;
+    defer allocator.free(font_file_path);
+    const file_content = try fs.cwd().readFileAlloc(allocator, font_file_path, std.math.maxInt(usize));
+    defer allocator.free(file_content);
+    const subset = try create_subset_from_file(allocator, font_file_path, "绪方理奈");
+    defer allocator.free(subset);
+    std.debug.print("origianal len {d}", .{file_content.len});
+    std.debug.print("Subset created with {any} bytes len {d}.\n", .{ subset, subset.len });
 }

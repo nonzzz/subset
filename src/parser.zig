@@ -117,6 +117,17 @@ pub const ParsedTables = struct {
         return false;
     }
 
+    pub inline fn get_table(self: *Self, tag: TableTag) ?Table {
+        inline for (std.meta.fields(Self)) |field| {
+            if (field.type == ?Table) {
+                if (@field(TableTag, field.name) == tag) {
+                    return @field(self, field.name);
+                }
+            }
+        }
+        return null;
+    }
+
     pub fn deinit(self: *Self) void {
         inline for (std.meta.fields(Self)) |field| {
             if (field.type == ?Table) {
@@ -179,7 +190,6 @@ pub const Parser = struct {
             const checksum = try self.reader.read_u32_be();
             const offset = try self.reader.read_u32_be();
             const length = try self.reader.read_u32_be();
-
             self.table_records.appendAssumeCapacity(TableRecord{
                 .tag = tag,
                 .checksum = checksum,

@@ -137,7 +137,7 @@ pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables
     };
 }
 
-fn parse_simple_glyph(self: *Self, glyph_header: GlyphHeader) void {
+fn parse_simple_glyph(self: *Self, glyph_header: GlyphHeader) !void {
     var end_pts_of_contours = try self.allocator.alloc(u16, glyph_header.number_of_contours);
     errdefer self.allocator.free(end_pts_of_contours);
     for (0..glyph_header.number_of_contours) |i| {
