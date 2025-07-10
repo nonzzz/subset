@@ -198,24 +198,24 @@ pub const Subset = struct {
 
         // https://learn.microsoft.com/en-us/typography/opentype/spec/otff#organization-of-an-opentype-font
         // copy head info
-        try self.parser.reader.seek_to(0);
+        // try self.parser.reader.seek_to(0);
 
-        const all_table_tags = [_]mod.TableTag{
-            .head, .hhea, .maxp, .os2, .cmap, .name, .post, .hmtx, .loca, .glyf,
-        };
-        const table_count: u16 = all_table_tags.len;
-        try buffer.appendSlice(&std.mem.toBytes(try self.parser.reader.read_u32_be()));
-        try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, all_table_tags.len)));
+        // const all_table_tags = [_]mod.TableTag{
+        //     .head, .hhea, .maxp, .os2, .cmap, .name, .post, .hmtx, .loca, .glyf,
+        // };
+        // const table_count: u16 = all_table_tags.len;
+        // try buffer.appendSlice(&std.mem.toBytes(try self.parser.reader.read_u32_be()));
+        // try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, all_table_tags.len)));
 
-        const search_range = (@as(u16, 1) << @intCast(std.math.log2(table_count))) * 16;
-        const entry_selector = std.math.log2(search_range / 16);
-        const range_shift = table_count * 16 - search_range;
+        // const search_range = (@as(u16, 1) << @intCast(std.math.log2(table_count))) * 16;
+        // const entry_selector = std.math.log2(search_range / 16);
+        // const range_shift = table_count * 16 - search_range;
 
-        try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, search_range)));
-        try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, @intCast(entry_selector))));
-        try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, range_shift)));
+        // try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, search_range)));
+        // try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, @intCast(entry_selector))));
+        // try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, range_shift)));
 
-        try self.generate_glyf_table();
+        // try self.generate_glyf_table();
 
         // tableRecords
         // I'm not sure the table records is a sortable array, but we can using the parsed offset to sort us new tables.
