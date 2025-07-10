@@ -35,13 +35,14 @@ pub const SimpleGlyph = struct {
     flags: []u8,
     x_coordinates: []i16,
     y_coordinates: []i16,
+    allocator: Allocator,
 
-    pub fn deinit(self: *SimpleGlyph, allocator: Allocator) void {
-        allocator.free(self.end_pts_of_contours);
-        allocator.free(self.instructions);
-        allocator.free(self.flags);
-        allocator.free(self.x_coordinates);
-        allocator.free(self.y_coordinates);
+    pub fn deinit(self: *SimpleGlyph) void {
+        self.allocator.free(self.end_pts_of_contours);
+        self.allocator.free(self.instructions);
+        self.allocator.free(self.flags);
+        self.allocator.free(self.x_coordinates);
+        self.allocator.free(self.y_coordinates);
     }
 };
 
@@ -80,10 +81,11 @@ pub const CompositeGlyph = struct {
     header: GlyphHeader,
     components: []CompositeComponent,
     instructions: []u8,
+    allocator: Allocator,
 
-    pub fn deinit(self: *CompositeGlyph, allocator: Allocator) void {
-        allocator.free(self.components);
-        allocator.free(self.instructions);
+    pub fn deinit(self: *CompositeGlyph) void {
+        self.allocator.free(self.components);
+        self.allocator.free(self.instructions);
     }
 };
 
@@ -91,10 +93,10 @@ pub const ParsedGlyph = union(enum) {
     simple: SimpleGlyph,
     composite: CompositeGlyph,
 
-    pub fn deinit(self: *ParsedGlyph, allocator: Allocator) void {
+    pub fn deinit(self: *ParsedGlyph) void {
         switch (self.*) {
-            .simple => |*simple| simple.deinit(allocator),
-            .composite => |*composite| composite.deinit(allocator),
+            .simple => |*simple| simple.deinit(),
+            .composite => |*composite| composite.deinit(),
         }
     }
 
@@ -137,10 +139,13 @@ pub fn init(allocator: Allocator, byte_reader: *reader.ByteReader, parsed_tables
     };
 }
 
-fn parse_simple_glyph(self: *Self, glyph_header: GlyphHeader) !void {
-    var end_pts_of_contours = try self.allocator.alloc(u16, glyph_header.number_of_contours);
+fn parse_simple_glyph(self: *Self, glyph_header: GlyphHeader) !SimpleGlyph {
+    if (glyph_header.number_of_contours < 0)
+        return Error.InvalidGlyfTable;
+    const count: usize = @intCast(glyph_header.number_of_contours);
+    var end_pts_of_contours = try self.allocator.alloc(u16, count);
     errdefer self.allocator.free(end_pts_of_contours);
-    for (0..glyph_header.number_of_contours) |i| {
+    for (0..count) |i| {
         end_pts_of_contours[i] = try self.byte_reader.read_u16_be();
     }
     const instruction_length = try self.byte_reader.read_u16_be();
@@ -151,7 +156,7 @@ fn parse_simple_glyph(self: *Self, glyph_header: GlyphHeader) !void {
         instructions[i] = try self.byte_reader.read_u8();
     }
 
-    const variable = if (glyph_header.number_of_contours > 0) end_pts_of_contours[glyph_header.number_of_contours - 1] + 1 else 0;
+    const variable = if (count > 0) end_pts_of_contours[count - 1] + 1 else 0;
 
     var flags = try self.allocator.alloc(u8, variable);
     errdefer self.allocator.free(flags);
@@ -220,6 +225,7 @@ fn parse_simple_glyph(self: *Self, glyph_header: GlyphHeader) !void {
         .flags = flags,
         .x_coordinates = x_coordinates,
         .y_coordinates = y_coordinates,
+        .allocator = self.allocator,
     };
 }
 
@@ -244,32 +250,29 @@ fn parse_composite_glyph(self: *Self, glyph_header: GlyphHeader) !CompositeGlyph
             arg2 = @as(i8, @bitCast(try self.byte_reader.read_u8()));
         }
 
-        var transform = ComponentTransform.none;
-
         // https://learn.microsoft.com/en-us/typography/opentype/spec/glyf#composite-glyph-description
-        if ((flags & 0x0008) != 0) {
+
+        const transform = if ((flags & 0x0008) != 0) blk: {
             const scale_raw = try self.byte_reader.read_i16_be();
             const scale = @as(f32, @floatFromInt(scale_raw)) / 16384.0;
-            transform = ComponentTransform{ .scale = .{ .scale = scale } };
-        } else if ((flags & 0x0040) != 0) {
+            break :blk ComponentTransform{ .scale = .{ .scale = scale } };
+        } else if ((flags & 0x0040) != 0) blk: {
             const x_scale_raw = try self.byte_reader.read_i16_be();
             const y_scale_raw = try self.byte_reader.read_i16_be();
             const x_scale = @as(f32, @floatFromInt(x_scale_raw)) / 16384.0;
             const y_scale = @as(f32, @floatFromInt(y_scale_raw)) / 16384.0;
-            transform = ComponentTransform{ .xy_scale = .{ .x_scale = x_scale, .y_scale = y_scale } };
-        } else if ((flags & 0x0080) != 0) {
+            break :blk ComponentTransform{ .xy_scale = .{ .x_scale = x_scale, .y_scale = y_scale } };
+        } else if ((flags & 0x0080) != 0) blk: {
             const xx_raw = try self.byte_reader.read_i16_be();
             const xy_raw = try self.byte_reader.read_i16_be();
             const yx_raw = try self.byte_reader.read_i16_be();
             const yy_raw = try self.byte_reader.read_i16_be();
-
             const xx = @as(f32, @floatFromInt(xx_raw)) / 16384.0;
             const xy = @as(f32, @floatFromInt(xy_raw)) / 16384.0;
             const yx = @as(f32, @floatFromInt(yx_raw)) / 16384.0;
             const yy = @as(f32, @floatFromInt(yy_raw)) / 16384.0;
-
-            transform = ComponentTransform{ .matrix = .{ .xx = xx, .xy = xy, .yx = yx, .yy = yy } };
-        }
+            break :blk ComponentTransform{ .matrix = .{ .xx = xx, .xy = xy, .yx = yx, .yy = yy } };
+        } else ComponentTransform.none;
 
         const component = CompositeComponent{
             .flags = flags,
@@ -303,10 +306,11 @@ fn parse_composite_glyph(self: *Self, glyph_header: GlyphHeader) !CompositeGlyph
         .header = glyph_header,
         .components = try components.toOwnedSlice(),
         .instructions = instructions,
+        .allocator = self.allocator,
     };
 }
 
-pub fn parse_glyph(self: *Self, glyph_offset: u32) !void {
+pub fn parse_glyph(self: *Self, glyph_offset: u32) !ParsedGlyph {
     try self.byte_reader.seek_to(self.table_offset + glyph_offset);
 
     const glyph_header = GlyphHeader{

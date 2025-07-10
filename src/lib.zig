@@ -180,34 +180,18 @@ pub const Subset = struct {
     }
 
     pub fn generate_subset(self: *Self) ![]u8 {
-        const selected_glyphs = try self.get_selected_glyphs();
-        defer self.allocator.free(selected_glyphs);
 
-        var glyph_set = std.HashMap(u16, void, std.hash_map.AutoContext(u16), std.hash_map.default_max_load_percentage).init(self.allocator);
-        defer glyph_set.deinit();
+        // 0 is for the .notdef glyph
+        // var glyph_ids = try self.allocator.alloc(u16, selected_glyphs.len + 1);
+        // defer self.allocator.free(glyph_ids);
 
-        // .notdef
-        try glyph_set.put(0, {});
-        for (selected_glyphs) |glyph_id| {
-            try glyph_set.put(glyph_id, {});
-        }
+        // glyph_ids[0] = 0;
 
-        var new_glyphs = std.ArrayList(u16).init(self.allocator);
-        defer new_glyphs.deinit();
+        // for (selected_glyphs, 0..) |glyph_id, i| {
+        //     glyph_ids[i + 1] = glyph_id;
+        // }
 
-        var glyph_iterator = glyph_set.iterator();
-        while (glyph_iterator.next()) |entry| {
-            try new_glyphs.append(entry.key_ptr.*);
-        }
-
-        std.sort.heap(u16, new_glyphs.items, {}, std.sort.asc(u16));
-
-        var glyph_id_map = std.HashMap(u16, u16, std.hash_map.AutoContext(u16), std.hash_map.default_max_load_percentage).init(self.allocator);
-        defer glyph_id_map.deinit();
-
-        for (new_glyphs.items, 0..) |old_glyph_id, new_index| {
-            try glyph_id_map.put(old_glyph_id, @intCast(new_index));
-        }
+        // std.sort.heap(u16, new_glyphs.items, {}, std.sort.asc(u16));
 
         var buffer = std.ArrayList(u8).init(self.allocator);
         errdefer buffer.deinit();
@@ -231,43 +215,78 @@ pub const Subset = struct {
         try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, @intCast(entry_selector))));
         try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, range_shift)));
 
+        try self.generate_glyf_table();
+
         // tableRecords
         // I'm not sure the table records is a sortable array, but we can using the parsed offset to sort us new tables.
-        const TagWithOffset = struct {
-            tag: mod.TableTag,
-            offset: u32,
-        };
-        var tags_with_offsets = std.ArrayList(TagWithOffset).init(self.allocator);
-        defer tags_with_offsets.deinit();
+        // const TagWithOffset = struct {
+        //     tag: mod.TableTag,
+        //     offset: u32,
+        // };
+        // var tags_with_offsets = std.ArrayList(TagWithOffset).init(self.allocator);
+        // defer tags_with_offsets.deinit();
 
-        for (all_table_tags) |tag| {
-            for (self.parser.table_records.items) |table_record| {
-                if (table_record.tag == tag) {
-                    try tags_with_offsets.append(TagWithOffset{
-                        .tag = tag,
-                        .offset = table_record.offset,
-                    });
-                    break;
-                }
-            }
-        }
+        // for (all_table_tags) |tag| {
+        //     for (self.parser.table_records.items) |table_record| {
+        //         if (table_record.tag == tag) {
+        //             try tags_with_offsets.append(TagWithOffset{
+        //                 .tag = tag,
+        //                 .offset = table_record.offset,
+        //             });
+        //             break;
+        //         }
+        //     }
+        // }
 
-        std.sort.heap(TagWithOffset, tags_with_offsets.items, {}, struct {
-            fn lessThan(context: void, a: TagWithOffset, b: TagWithOffset) bool {
-                _ = context;
-                return a.offset < b.offset;
-            }
-        }.lessThan);
+        // std.sort.heap(TagWithOffset, tags_with_offsets.items, {}, struct {
+        //     fn lessThan(context: void, a: TagWithOffset, b: TagWithOffset) bool {
+        //         _ = context;
+        //         return a.offset < b.offset;
+        //     }
+        // }.lessThan);
 
-        for (tags_with_offsets.items) |sorted_record| {
-            if (self.parser.parsed_tables.get_table(sorted_record.tag)) |table_data| {
-                try write_table_record_typed(&buffer, sorted_record.tag, &table_data);
-            } else {
-                continue;
-            }
-        }
+        // for (tags_with_offsets.items) |sorted_record| {
+        //     if (self.parser.parsed_tables.get_table(sorted_record.tag)) |table_data| {
+        //         try write_table_record_typed(&buffer, sorted_record.tag, &table_data);
+        //     } else {
+        //         continue;
+        //     }
+        // }
 
         return try buffer.toOwnedSlice();
+    }
+
+    pub fn generate_glyf_table(self: *Self) !void {
+        const selected_glyphs = try self.get_selected_glyphs();
+        defer self.allocator.free(selected_glyphs);
+
+        var cap: usize = 0;
+
+        var glyf_table = self.parser.parsed_tables.glyf.?;
+        var glyf = glyf_table.cast(table.Glyf);
+        var loca_table = self.parser.parsed_tables.loca.?;
+        var loca = loca_table.cast(table.Loca);
+
+        for (selected_glyphs) |glyph_id| {
+            const glyph_offset = loca.get_glyph_offset(glyph_id);
+            if (glyph_offset) |offset| {
+                var parsed_glyph = try glyf.parse_glyph(offset);
+                switch (parsed_glyph) {
+                    .simple => {
+                        std.debug.print("Processing simple glyph with ID: {d}\n", .{glyph_id});
+                    },
+                    .composite => {
+                        std.debug.print("Processing composite glyph with ID: {d}\n", .{glyph_id});
+                    },
+                }
+                defer parsed_glyph.deinit();
+            }
+            // glyf.
+
+            cap += 1;
+        }
+
+        // std.debug.print("Generating glyf table is not implemented yet. {any}\n", .{glyph_ids});
     }
 };
 
@@ -404,7 +423,8 @@ test "create subset from file" {
     defer allocator.free(font_file_path);
     const file_content = try fs.cwd().readFileAlloc(allocator, font_file_path, std.math.maxInt(usize));
     defer allocator.free(file_content);
-    const subset = try create_subset_from_file(allocator, font_file_path, "绪方理奈");
+    // 方理奈
+    const subset = try create_subset_from_file(allocator, font_file_path, "绪");
     defer allocator.free(subset);
     std.debug.print("origianal len {d}", .{file_content.len});
     std.debug.print("Subset created with {any} bytes len {d}.\n", .{ subset, subset.len });

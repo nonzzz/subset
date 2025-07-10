@@ -150,7 +150,7 @@ pub const Parser = struct {
     const Self = @This();
     buffer: []const u8,
     allocator: Allocator,
-    reader: reader.ByteReader,
+    reader: *reader.ByteReader,
 
     table_records: std.ArrayList(TableRecord),
     parsed_tables: ParsedTables,
@@ -165,10 +165,13 @@ pub const Parser = struct {
     };
 
     pub fn init(allocator: Allocator, buffer: []const u8) !Self {
+        const byte_reader = try allocator.create(reader.ByteReader);
+        byte_reader.* = reader.ByteReader.init(buffer);
+
         return Self{
             .buffer = buffer,
             .allocator = allocator,
-            .reader = reader.ByteReader.init(buffer),
+            .reader = byte_reader,
             .parsed_tables = ParsedTables{},
             .table_records = std.ArrayList(TableRecord).init(allocator),
         };
@@ -177,6 +180,7 @@ pub const Parser = struct {
     pub fn deinit(self: *Self) void {
         self.table_records.deinit();
         self.parsed_tables.deinit();
+        self.allocator.destroy(self.reader);
     }
 
     pub fn parse(self: *Self) !void {
@@ -215,52 +219,52 @@ pub const Parser = struct {
 
         switch (tag) {
             .cmap => {
-                var cmap_table = try table.Cmap.init(self.allocator, &self.reader, &self.parsed_tables);
+                var cmap_table = try table.Cmap.init(self.allocator, self.reader, &self.parsed_tables);
                 try cmap_table.parse();
                 self.parsed_tables.cmap = cmap_table;
             },
             .head => {
-                var head_table = try table.Head.init(self.allocator, &self.reader, &self.parsed_tables);
+                var head_table = try table.Head.init(self.allocator, self.reader, &self.parsed_tables);
                 try head_table.parse();
                 self.parsed_tables.head = head_table;
             },
             .hhea => {
-                var hhea_table = try table.Hhea.init(self.allocator, &self.reader, &self.parsed_tables);
+                var hhea_table = try table.Hhea.init(self.allocator, self.reader, &self.parsed_tables);
                 try hhea_table.parse();
                 self.parsed_tables.hhea = hhea_table;
             },
             .maxp => {
-                var maxp_table = try table.Maxp.init(self.allocator, &self.reader, &self.parsed_tables);
+                var maxp_table = try table.Maxp.init(self.allocator, self.reader, &self.parsed_tables);
                 try maxp_table.parse();
                 self.parsed_tables.maxp = maxp_table;
             },
             .name => {
-                var name_table = try table.Name.init(self.allocator, &self.reader, &self.parsed_tables);
+                var name_table = try table.Name.init(self.allocator, self.reader, &self.parsed_tables);
                 try name_table.parse();
                 self.parsed_tables.name = name_table;
             },
             .os2 => {
-                var os2_table = try table.Os2.init(self.allocator, &self.reader, &self.parsed_tables);
+                var os2_table = try table.Os2.init(self.allocator, self.reader, &self.parsed_tables);
                 try os2_table.parse();
                 self.parsed_tables.os2 = os2_table;
             },
             .post => {
-                var post_table = try table.Post.init(self.allocator, &self.reader, &self.parsed_tables);
+                var post_table = try table.Post.init(self.allocator, self.reader, &self.parsed_tables);
                 try post_table.parse();
                 self.parsed_tables.post = post_table;
             },
             .hmtx => {
-                var hmtx_table = try table.Hmtx.init(self.allocator, &self.reader, &self.parsed_tables);
+                var hmtx_table = try table.Hmtx.init(self.allocator, self.reader, &self.parsed_tables);
                 try hmtx_table.parse();
                 self.parsed_tables.hmtx = hmtx_table;
             },
             .loca => {
-                var loca_table = try table.Loca.init(self.allocator, &self.reader, &self.parsed_tables);
+                var loca_table = try table.Loca.init(self.allocator, self.reader, &self.parsed_tables);
                 try loca_table.parse();
                 self.parsed_tables.loca = loca_table;
             },
             .glyf => {
-                var glyf_table = try table.Glyf.init(self.allocator, &self.reader, &self.parsed_tables);
+                var glyf_table = try table.Glyf.init(self.allocator, self.reader, &self.parsed_tables);
                 try glyf_table.parse();
                 self.parsed_tables.glyf = glyf_table;
             },
