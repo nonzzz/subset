@@ -250,6 +250,31 @@ pub fn get_glyph_name(self: *Self, glyph_id: u16) ?[]const u8 {
     }
 }
 
+pub fn get_glyph_index(self: *Self, glyph_id: u16) ?u16 {
+    switch (self.version) {
+        0x00010000 => {
+            if (glyph_id < STANDARD_NAMES.len) {
+                return glyph_id;
+            }
+            return null;
+        },
+        0x00020000 => {
+            if (self.v2_data) |v2| {
+                if (glyph_id >= v2.num_glyphs) return null;
+
+                const name_index = v2.glyph_name_index[glyph_id];
+                if (name_index < 258) {
+                    return name_index;
+                } else {
+                    return @as(u16, 258 + name_index);
+                }
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
+
 test "parse post table v1.0" {
     const allocator = std.testing.allocator;
     const buffer = &[_]u8{
