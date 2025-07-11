@@ -180,113 +180,53 @@ pub const Subset = struct {
     }
 
     pub fn generate_subset(self: *Self) ![]u8 {
-
-        // 0 is for the .notdef glyph
-        // var glyph_ids = try self.allocator.alloc(u16, selected_glyphs.len + 1);
-        // defer self.allocator.free(glyph_ids);
-
-        // glyph_ids[0] = 0;
-
-        // for (selected_glyphs, 0..) |glyph_id, i| {
-        //     glyph_ids[i + 1] = glyph_id;
-        // }
-
-        // std.sort.heap(u16, new_glyphs.items, {}, std.sort.asc(u16));
-
         var buffer = std.ArrayList(u8).init(self.allocator);
         errdefer buffer.deinit();
 
-        // https://learn.microsoft.com/en-us/typography/opentype/spec/otff#organization-of-an-opentype-font
-        // copy head info
-        // try self.parser.reader.seek_to(0);
+        try self.selected_glyphs.put(0, {});
 
-        // const all_table_tags = [_]mod.TableTag{
-        //     .head, .hhea, .maxp, .os2, .cmap, .name, .post, .hmtx, .loca, .glyf,
-        // };
-        // const table_count: u16 = all_table_tags.len;
-        // try buffer.appendSlice(&std.mem.toBytes(try self.parser.reader.read_u32_be()));
-        // try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, all_table_tags.len)));
+        var glyph_set = std.AutoHashMap(u16, void).init(self.allocator);
+        defer glyph_set.deinit();
 
-        // const search_range = (@as(u16, 1) << @intCast(std.math.log2(table_count))) * 16;
-        // const entry_selector = std.math.log2(search_range / 16);
-        // const range_shift = table_count * 16 - search_range;
+        const selected_glyphs = try self.get_selected_glyphs();
+        defer self.allocator.free(selected_glyphs);
+        for (selected_glyphs) |glyph_id| {
+            try self.collect_glyph_ids(glyph_id, &glyph_set);
+        }
 
-        // try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, search_range)));
-        // try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, @intCast(entry_selector))));
-        // try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, range_shift)));
-
-        // try self.generate_glyf_table();
-
-        // tableRecords
-        // I'm not sure the table records is a sortable array, but we can using the parsed offset to sort us new tables.
-        // const TagWithOffset = struct {
-        //     tag: mod.TableTag,
-        //     offset: u32,
-        // };
-        // var tags_with_offsets = std.ArrayList(TagWithOffset).init(self.allocator);
-        // defer tags_with_offsets.deinit();
-
-        // for (all_table_tags) |tag| {
-        //     for (self.parser.table_records.items) |table_record| {
-        //         if (table_record.tag == tag) {
-        //             try tags_with_offsets.append(TagWithOffset{
-        //                 .tag = tag,
-        //                 .offset = table_record.offset,
-        //             });
-        //             break;
-        //         }
-        //     }
-        // }
-
-        // std.sort.heap(TagWithOffset, tags_with_offsets.items, {}, struct {
-        //     fn lessThan(context: void, a: TagWithOffset, b: TagWithOffset) bool {
-        //         _ = context;
-        //         return a.offset < b.offset;
-        //     }
-        // }.lessThan);
-
-        // for (tags_with_offsets.items) |sorted_record| {
-        //     if (self.parser.parsed_tables.get_table(sorted_record.tag)) |table_data| {
-        //         try write_table_record_typed(&buffer, sorted_record.tag, &table_data);
-        //     } else {
-        //         continue;
-        //     }
-        // }
+        const glyph_ids = try self.allocator.alloc(u16, glyph_set.count());
+        defer self.allocator.free(glyph_ids);
+        var iter = glyph_set.iterator();
+        var i: usize = 0;
+        while (iter.next()) |entry| {
+            glyph_ids[i] = entry.key_ptr.*;
+            i += 1;
+        }
+        std.sort.heap(u16, glyph_ids, {}, std.sort.asc(u16));
 
         return try buffer.toOwnedSlice();
     }
 
-    pub fn generate_glyf_table(self: *Self) !void {
-        const selected_glyphs = try self.get_selected_glyphs();
-        defer self.allocator.free(selected_glyphs);
+    fn collect_glyph_ids(self: *Self, glyph_id: u16, glyph_set: *std.AutoHashMap(u16, void)) !void {
+        if (glyph_set.contains(glyph_id)) return;
+        try glyph_set.put(glyph_id, {});
+        const glyf_table = self.parser.parsed_tables.glyf.?;
+        const glyf = glyf_table.cast(table.Glyf);
+        const loca_table = self.parser.parsed_tables.loca.?;
+        const loca = loca_table.cast(table.Loca);
 
-        var cap: usize = 0;
+        const glyph_offset = loca.get_glyph_offset(glyph_id) orelse return;
+        var parsed_glyph = try glyf.parse_glyph(glyph_offset);
 
-        var glyf_table = self.parser.parsed_tables.glyf.?;
-        var glyf = glyf_table.cast(table.Glyf);
-        var loca_table = self.parser.parsed_tables.loca.?;
-        var loca = loca_table.cast(table.Loca);
-
-        for (selected_glyphs) |glyph_id| {
-            const glyph_offset = loca.get_glyph_offset(glyph_id);
-            if (glyph_offset) |offset| {
-                var parsed_glyph = try glyf.parse_glyph(offset);
-                switch (parsed_glyph) {
-                    .simple => {
-                        std.debug.print("Processing simple glyph with ID: {d}\n", .{glyph_id});
-                    },
-                    .composite => {
-                        std.debug.print("Processing composite glyph with ID: {d}\n", .{glyph_id});
-                    },
+        switch (parsed_glyph) {
+            .simple => {},
+            .composite => |composite_glyph| {
+                for (composite_glyph.components) |component| {
+                    try self.collect_glyph_ids(component.glyph_index, glyph_set);
                 }
-                defer parsed_glyph.deinit();
-            }
-            // glyf.
-
-            cap += 1;
+            },
         }
-
-        // std.debug.print("Generating glyf table is not implemented yet. {any}\n", .{glyph_ids});
+        defer parsed_glyph.deinit();
     }
 };
 
@@ -364,25 +304,6 @@ pub fn get_font_info_from_buffer(allocator: Allocator, font_data: []const u8) !F
     return FontReader.init(allocator, font_data);
 }
 
-pub fn write_table_records(buffer: *std.ArrayList(u8), comptime cast_tag: type, table_data: *const Table) !void {
-    const cast_table = table_data.cast(cast_tag);
-    inline for (std.meta.fields(@TypeOf(cast_table.*))) |field| {
-        const field_value = @field(cast_table, field.name);
-
-        switch (field.type) {
-            u16 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, field_value))),
-            u32 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u32, field_value))),
-            i16 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(i16, field_value))),
-            i32 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(i32, field_value))),
-            i64 => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(i64, field_value))),
-            table.Head.MacStyle => try buffer.appendSlice(&std.mem.toBytes(std.mem.nativeToBig(u16, field_value.to_u16()))),
-            else => {
-                continue;
-            },
-        }
-    }
-}
-
 fn getTableType(comptime tag: mod.TableTag) type {
     return switch (tag) {
         .head => table.Head,
@@ -396,25 +317,6 @@ fn getTableType(comptime tag: mod.TableTag) type {
         .loca => table.Loca,
         .glyf => table.Glyf,
     };
-}
-
-pub fn write_table_record_typed(buffer: *std.ArrayList(u8), tag: mod.TableTag, table_data: *const Table) !void {
-    switch (tag) {
-        .head => try write_table_records(buffer, table.Head, table_data),
-        .hhea => try write_table_records(buffer, table.Hhea, table_data),
-        .maxp => try write_table_records(buffer, table.Maxp, table_data),
-        .os2 => try write_table_records(buffer, table.Os2, table_data),
-        .cmap => try write_table_records(buffer, table.Cmap, table_data),
-        .name => try write_table_records(buffer, table.Name, table_data),
-        .post => try write_table_records(buffer, table.Post, table_data),
-        .hmtx => try write_table_records(buffer, table.Hmtx, table_data),
-        .loca => try write_table_records(buffer, table.Loca, table_data),
-        .glyf => try write_table_records(buffer, table.Glyf, table_data),
-        else => {
-            // Unsupported table type, skip writing
-            return;
-        },
-    }
 }
 
 test "create subset from file" {
