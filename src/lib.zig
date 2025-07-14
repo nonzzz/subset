@@ -1096,10 +1096,7 @@ pub const Subset = struct {
 
             if (loca.get_glyph_offset(glyph_id)) |glyph_offset| {
                 if (glyf.parse_glyph(glyph_offset)) |parsed_glyph| {
-                    const glyph_bounds = switch (parsed_glyph) {
-                        .simple => |simple| simple.header,
-                        .composite => |composite| composite.header,
-                    };
+                    const glyph_bounds = parsed_glyph.get_header();
                     defer parsed_glyph.deinit();
 
                     const right_side_bearing = @as(i16, @intCast(glyph_info.advance_width)) - glyph_bounds.x_max;
@@ -1183,10 +1180,7 @@ pub const Subset = struct {
                 if (glyf.parse_glyph(glyph_offset)) |parsed_glyph| {
                     defer parsed_glyph.deinit();
 
-                    const glyph_bounds = switch (parsed_glyph) {
-                        .simple => |simple| simple.header,
-                        .composite => |composite| composite.header,
-                    };
+                    const glyph_bounds = parsed_glyph.get_header();
 
                     if (glyph_bounds.number_of_contours != 0 or
                         (glyph_bounds.x_min != glyph_bounds.x_max and glyph_bounds.y_min != glyph_bounds.y_max))
