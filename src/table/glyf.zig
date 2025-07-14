@@ -37,7 +37,7 @@ pub const SimpleGlyph = struct {
     y_coordinates: []i16,
     allocator: Allocator,
 
-    pub fn deinit(self: *SimpleGlyph) void {
+    pub fn deinit(self: *const SimpleGlyph) void {
         self.allocator.free(self.end_pts_of_contours);
         self.allocator.free(self.instructions);
         self.allocator.free(self.flags);
@@ -83,7 +83,7 @@ pub const CompositeGlyph = struct {
     instructions: []u8,
     allocator: Allocator,
 
-    pub fn deinit(self: *CompositeGlyph) void {
+    pub fn deinit(self: *const CompositeGlyph) void {
         self.allocator.free(self.components);
         self.allocator.free(self.instructions);
     }
@@ -93,7 +93,7 @@ pub const ParsedGlyph = union(enum) {
     simple: SimpleGlyph,
     composite: CompositeGlyph,
 
-    pub fn deinit(self: *ParsedGlyph) void {
+    pub fn deinit(self: *const ParsedGlyph) void {
         switch (self.*) {
             .simple => |*simple| simple.deinit(),
             .composite => |*composite| composite.deinit(),

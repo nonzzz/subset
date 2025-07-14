@@ -1,8 +1,10 @@
-// import fs from 'fs'
+import fs from 'fs'
 import path from 'path'
-import { ttf } from 'ttf.zig'
+import { createSubsetFromText, ttf } from 'ttf.zig'
 
 const TTF_PATH = path.join(process.cwd(), 'fonts', 'LXGWBright-Light.ttf')
+
+const OUTPUT_PATH = path.join(process.cwd(), 'output.ttf')
 
 async function main() {
   // const state = ttf.loadFont(new Uint8Array(fs.readFileSync(TTF_PATH)))
@@ -57,6 +59,17 @@ async function main() {
     }
   }
 
+  // ttf.createSubset()
+  // ttf.addTextToSubset(testText)
+  // const result = ttf.generateSubsetFont()
+  const result = createSubsetFromText(fs.readFileSync(TTF_PATH), testText)
+  if (result) {
+    console.log(`\n✅ Subset font generated successfully!`)
+    fs.writeFileSync(OUTPUT_PATH, result)
+    console.log(`📂 Subset font saved to: ${OUTPUT_PATH}`)
+  } else {
+    console.error('❌ Failed to generate subset font')
+  }
   ttf.destroy()
 }
 main()

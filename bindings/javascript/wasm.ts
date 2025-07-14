@@ -47,7 +47,10 @@ export interface WASMInstance {
 export interface WASMZigEnv extends WebAssembly.ModuleImports {
   host_read_file: (pathPtr: number, pathLen: number, outPtrPtr: number, outLenPtr: number) => boolean
   host_write_file: (pathPtr: number, pathLen: number, dataPtr: number, dataLen: number) => boolean
+  host_head_modified_time: (outTimestampPtr: number) => boolean
 }
+
+const MAC_EPOCH_OFFSET = 2082844800 // Offset from Unix epoch to Mac epoch
 
 export const ERR_CODE = {
   SUCCESS: 0,
@@ -102,6 +105,65 @@ export class FontSubset {
 
   constructor(instance: WASMInstance) {
     this.instance = instance
+  }
+
+  static createSubsetFromText(instance: WASMInstance, fontData: Uint8Array, text: string): Uint8Array | null {
+    const fontPtr = instance.allocate_memory(fontData.length)
+    if (fontPtr === null) { return null }
+
+    const textData = encoder.encode(text)
+    const textPtr = instance.allocate_memory(textData.length)
+    if (textPtr === null) {
+      instance.free_memory(fontPtr, fontData.length)
+      return null
+    }
+
+    const outputPtrPtr = instance.allocate_memory(4)
+    const outputLenPtr = instance.allocate_memory(4)
+
+    if (outputPtrPtr === null || outputLenPtr === null) {
+      instance.free_memory(fontPtr, fontData.length)
+      instance.free_memory(textPtr, textData.length)
+      if (outputPtrPtr) { instance.free_memory(outputPtrPtr, 4) }
+      if (outputLenPtr) { instance.free_memory(outputLenPtr, 4) }
+      return null
+    }
+
+    try {
+      const memory = new Uint8Array(instance.memory.buffer)
+      memory.set(fontData, fontPtr)
+      memory.set(textData, textPtr)
+
+      const errorCode = instance.create_subset_from_text(
+        fontPtr,
+        fontData.length,
+        textPtr,
+        textData.length,
+        outputPtrPtr,
+        outputLenPtr
+      )
+
+      if (errorCode !== ERR_CODE.SUCCESS) {
+        return null
+      }
+
+      const outputPtr = new Uint32Array(instance.memory.buffer, outputPtrPtr, 1)[0]
+      const outputLen = new Uint32Array(instance.memory.buffer, outputLenPtr, 1)[0]
+
+      if (outputLen === 0) { return new Uint8Array(0) }
+
+      const result = new Uint8Array(instance.memory.buffer, outputPtr, outputLen)
+      const copy = new Uint8Array(result)
+
+      instance.free_memory(outputPtr, outputLen)
+
+      return copy
+    } finally {
+      instance.free_memory(fontPtr, fontData.length)
+      instance.free_memory(textPtr, textData.length)
+      instance.free_memory(outputPtrPtr, 4)
+      instance.free_memory(outputLenPtr, 4)
+    }
   }
 
   loadFont(fontData: Uint8Array): boolean {
@@ -430,9 +492,29 @@ export function createSubsetEngine(binary: Uint8Array): FontSubset {
       } catch {
         return false
       }
+    },
+    host_head_modified_time: (outTimestampPtr: number) => {
+      try {
+        if (!WASM_INSTANCE) { return false }
+        const currentUnixTime = Math.floor(Date.now() / 1000)
+        const currentMacTime = currentUnixTime + MAC_EPOCH_OFFSET
+        const timestampView = new BigUint64Array(WASM_INSTANCE.memory.buffer, outTimestampPtr, 1)
+        timestampView[0] = BigInt(currentMacTime)
+        return true
+      } catch {
+        return false
+      }
     }
   }
   WASM_INSTANCE = new WebAssembly.Instance(compiledWASM, { env }).exports as unknown as WASMInstance
 
   return new FontSubset(WASM_INSTANCE)
+}
+
+export function createSubsetFromText(
+  fontData: Uint8Array,
+  text: string
+): Uint8Array | null {
+  if (!WASM_INSTANCE) { return null }
+  return FontSubset.createSubsetFromText(WASM_INSTANCE, fontData, text)
 }
