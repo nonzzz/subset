@@ -241,85 +241,23 @@ pub const Subset = struct {
         var tables = std.ArrayList(TableRecord).init(self.allocator);
         defer tables.deinit();
 
-        try tables.append(TableRecord{
-            .tag = .cmap,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(cmap_buffer.len),
-            .data = cmap_buffer,
-        });
+        const table_tags = [_]TableTag{ .cmap, .glyf, .head, .hhea, .hmtx, .loca, .maxp, .name, .os2, .post };
+        const table_buffers = [_][]const u8{
+            cmap_buffer,
+            glyf_buffer,
+            head_buffer,
+            hhea_buffer,
+            hmtx_buffer,
+            loca_buffer,
+            maxp_buffer,
+            name_buffer,
+            os2_buffer,
+            post_buffer,
+        };
 
-        try tables.append(TableRecord{
-            .tag = .glyf,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(glyf_buffer.len),
-            .data = glyf_buffer,
-        });
-
-        try tables.append(TableRecord{
-            .tag = .head,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(head_buffer.len),
-            .data = head_buffer,
-        });
-
-        try tables.append(TableRecord{
-            .tag = .hhea,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(hhea_buffer.len),
-            .data = hhea_buffer,
-        });
-
-        try tables.append(TableRecord{
-            .tag = .hmtx,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(hmtx_buffer.len),
-            .data = hmtx_buffer,
-        });
-
-        try tables.append(TableRecord{
-            .tag = .loca,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(loca_buffer.len),
-            .data = loca_buffer,
-        });
-
-        try tables.append(TableRecord{
-            .tag = .maxp,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(maxp_buffer.len),
-            .data = maxp_buffer,
-        });
-
-        try tables.append(TableRecord{
-            .tag = .name,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(name_buffer.len),
-            .data = name_buffer,
-        });
-
-        try tables.append(TableRecord{
-            .tag = .os2,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(os2_buffer.len),
-            .data = os2_buffer,
-        });
-
-        try tables.append(TableRecord{
-            .tag = .post,
-            .checksum = 0,
-            .offset = 0,
-            .length = @intCast(post_buffer.len),
-            .data = post_buffer,
-        });
+        for (table_tags, 0..) |tag, pos| {
+            try tables.append(write_table(tag, table_buffers[pos]));
+        }
 
         std.sort.heap(TableRecord, tables.items, {}, struct {
             fn lessThan(_: void, a: TableRecord, b: TableRecord) bool {
@@ -430,10 +368,6 @@ pub const Subset = struct {
     }
 
     fn generate_loca_subset(self: *Self, glyph_ids: []u16, glyf_data: []const u8) ![]u8 {
-        const head_table = self.parser.parsed_tables.head.?;
-        const head = head_table.cast(table.Head);
-        _ = head;
-
         const max_offset: u32 = @intCast(glyf_data.len);
         const is_short_format = max_offset <= 0x1FFFE;
 
@@ -442,9 +376,6 @@ pub const Subset = struct {
 
         var current_offset: u32 = 0;
 
-        const glyf_table = self.parser.parsed_tables.glyf.?;
-        const glyf = glyf_table.cast(table.Glyf);
-        _ = glyf;
         const loca_table = self.parser.parsed_tables.loca.?;
         const loca = loca_table.cast(table.Loca);
 
@@ -715,6 +646,16 @@ pub const Subset = struct {
         try buffer.write(u16, 0, .big);
 
         return buffer.to_owned_slice();
+    }
+
+    fn write_table(tag: TableTag, data: []const u8) TableRecord {
+        return TableRecord{
+            .tag = tag,
+            .checksum = 0,
+            .offset = 0,
+            .length = @intCast(data.len),
+            .data = data,
+        };
     }
 
     fn calculate_format4_size(codepoint_to_glyph: std.AutoHashMap(u32, u16), include_all: bool) !u32 {
