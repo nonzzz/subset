@@ -88,8 +88,8 @@ export default defineConfig([
                 chunk.code.slice(pos + 'declare function createSubsetEngine(binary: Uint8Array): FontSubset;'.length)
               chunk.code = chunk.code.replace('declare function createSubsetEngine(binary: Uint8Array): FontSubset;', '')
               chunk.code = chunk.code.replace(
-                `export { ERR_CODE, FontSubset, createSubsetEngine }`,
-                'export { ERR_CODE, FontSubset, ttf }'
+                `export { ERR_CODE, FontSubset, createSubsetEngine, createSubsetFromText }`,
+                'export { ERR_CODE, FontSubset, createSubsetFromText, ttf }'
               )
             }
           }

@@ -1,0 +1,22 @@
+{
+  "name": "@ttf.zig/cli",
+  "version": "0.0.0",
+  "bin": {
+    "ttf-subset": "./dist/index.js"
+  },
+  "dependencies": {
+    "ttf.zig": "workspace:*",
+    "tinyglobby": "^0.2.14"
+  },
+  "devDependencies": {
+    "mri": "^1.2.0",
+    "ansis": "^4.1.0"
+  },
+  "description": "A CLI tool to extract ttf/otf subsets.",
+  "scripts": {
+    "build": "rollup --config ./rollup.config.ts --configPlugin swc3"
+  },
+  "files": [
+    "dist"
+  ]
+}
