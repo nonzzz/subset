@@ -6,6 +6,7 @@ import mri from 'mri'
 import { extname, resolve } from 'path'
 import { globSync } from 'tinyglobby'
 import { ttf } from 'ttf.zig'
+import { ttf2woff } from './woff'
 
 interface CliOptions {
   content?: string[]
@@ -20,34 +21,47 @@ interface CliOptions {
 const SUPPORTED_TEXT_EXTENSIONS = ['.txt', '.html', '.css', '.js', '.ts', '.jsx', '.tsx', '.vue', '.svelte', '.md']
 
 function showHelp() {
+  const options = [
+    { label: '--content, -c', desc: 'Glob pattern(s) for content files to scan' },
+    { label: '--font, -f', desc: 'Path to the font file (TTF/OTF)' },
+    { label: '--output, -o', desc: 'Output path(s) for the subset font (can be used multiple times or comma-separated)' },
+    { label: '', desc: dim('If the filename ends with .woff, outputs WOFF format') },
+    { label: '--ext', desc: 'Additional file extensions to scan (default: .txt,.html,.css,.js,.ts,.jsx,.tsx,.vue,.svelte,.md)' },
+    { label: '--verbose, -v', desc: 'Enable verbose logging' },
+    { label: '--help, -h', desc: 'Show this help message' },
+    { label: '--version', desc: 'Show version' }
+  ]
+  const padLen = Math.max(...options.map((opt) => opt.label.length)) + 2
   console.log(`
 ${bold(cyan('ttf-subset'))} - Extract font subsets based on text content
 
 ${bold('Usage:')}
-  ttf-subset --content <glob> --font <font-file> --output <output-file>
+  ttf-subset --content <glob> --font <font-file> --output <output-file>[,<output-file>...]
 
 ${bold('Options:')}
-  ${green('--content, -c')}    Glob pattern(s) for content files to scan
-  ${green('--font, -f')}       Path to the font file (TTF/OTF)
-  ${green('--output, -o')}     Output path for the subset font
-  ${green('--ext')}            Additional file extensions to scan (default: .txt,.html,.css,.js,.ts,.jsx,.tsx,.vue,.svelte,.md)
-  ${green('--verbose, -v')}    Enable verbose logging
-  ${green('--help, -h')}       Show this help message
-  ${green('--version')}        Show version
+${
+    options.map((opt) =>
+      opt.label
+        ? `  ${green(opt.label.padEnd(padLen))}${opt.desc}`
+        : `  ${''.padEnd(padLen)}${opt.desc}`
+    ).join('\n')
+  }
 
 ${bold('Examples:')}
-  ${dim('# Extract subset from all text files in src directory')}
-  ttf-subset --content "src/**/*" --font font.ttf --output font-subset.ttf
+  ${dim('# Output as WOFF and TTF')}
+  ttf-subset --content "src/**/*" --font font.ttf --output font-subset.woff --output font-subset.ttf
 
-  ${dim('# Multiple content patterns')}
-  ttf-subset -c "src/**/*" -c "pages/**/*" -f font.ttf -o subset.ttf
-
-  ${dim('# Include additional file extensions')}
-  ttf-subset -c "src/**/*" -f font.ttf -o subset.ttf --ext .php --ext .py
-
-  ${dim('# Verbose output')}
-  ttf-subset -c "src/**/*" -f font.ttf -o subset.ttf --verbose
+  ${dim('# Output multiple formats (comma separated)')}
+  ttf-subset --content "src/**/*" --font font.ttf --output font-subset.woff,font-subset.ttf
 `)
+}
+
+function parseOutputArgs(arg: string | string[] | undefined): string[] {
+  if (!arg) { return [] }
+  if (Array.isArray(arg)) {
+    return arg.flatMap((s) => s.split(',')).map((s) => s.trim()).filter(Boolean)
+  }
+  return arg.split(',').map((s) => s.trim()).filter(Boolean)
 }
 
 function logVerbose(message: string, verbose: boolean) {
@@ -158,7 +172,6 @@ function main() {
     verbose: args.verbose,
     ext: Array.isArray(args.ext) ? args.ext : args.ext ? [args.ext] : []
   }
-
   if (options.help) {
     showHelp()
     return
@@ -176,7 +189,9 @@ function main() {
     process.exit(1)
   }
 
-  if (!options.output) {
+  const outputList = parseOutputArgs(options.output)
+
+  if (outputList.length === 0) {
     console.error(red('Error: --output option is required'))
     console.log('\nUse --help for usage information')
     process.exit(1)
@@ -192,7 +207,7 @@ function main() {
 
     console.log(cyan(`Starting font subset extraction...`))
     console.log(`Font: ${bold(fontPath)} (${formatFileSize(fontStat.size)})`)
-    console.log(`Output: ${bold(resolve(options.output))}`)
+    console.log(`Output: ${bold(outputList.join(', '))}`)
 
     const extensions: string[] = [...SUPPORTED_TEXT_EXTENSIONS, ...options.ext || []]
     logVerbose(`Supported extensions: ${extensions.join(', ')}`, options.verbose || false)
@@ -244,18 +259,29 @@ function main() {
       process.exit(1)
     }
 
-    const outputPath = resolve(options.output)
-    writeFileSync(outputPath, subsetFont)
+    for (const outputPathRaw of outputList) {
+      const outputPath = resolve(outputPathRaw)
+      let outputData: Uint8Array
 
-    const originalSize = fontStat.size
-    const subsetSize = subsetFont.length
-    const reduction = ((1 - subsetSize / originalSize) * 100).toFixed(1)
+      if (outputPath.endsWith('.woff')) {
+        logVerbose(`Converting subset font to WOFF format for ${outputPath}...`, options.verbose || false)
+        outputData = ttf2woff(subsetFont)
+      } else {
+        outputData = subsetFont
+      }
 
-    console.log(green('✓ Font subset created successfully!'))
-    console.log(`Original size: ${bold(formatFileSize(originalSize))}`)
-    console.log(`Subset size: ${bold(formatFileSize(subsetSize))}`)
-    console.log(`Size reduction: ${bold(green(`${reduction}%`))}`)
-    console.log(`Output: ${bold(outputPath)}`)
+      writeFileSync(outputPath, outputData)
+
+      const originalSize = fontStat.size
+      const subsetSize = outputData.length
+      const reduction = ((1 - subsetSize / originalSize) * 100).toFixed(1)
+
+      console.log(green('✓ Font subset created successfully!'))
+      console.log(`Original size: ${bold(formatFileSize(originalSize))}`)
+      console.log(`Subset size: ${bold(formatFileSize(subsetSize))}`)
+      console.log(`Size reduction: ${bold(green(`${reduction}%`))}`)
+      console.log(`Output: ${bold(outputPath)}`)
+    }
 
     ttf.destroy()
   } catch (error) {

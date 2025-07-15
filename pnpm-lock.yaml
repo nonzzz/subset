@@ -38,9 +38,6 @@ importers:
       mitata:
         specifier: ^1.0.34
         version: 1.0.34
-      node-api-headers:
-        specifier: ^1.5.0
-        version: 1.5.0
       opentype.js:
         specifier: ^1.3.4
         version: 1.3.4
@@ -971,9 +968,6 @@ packages:
 
   natural-compare@1.4.0:
     resolution: {integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==}
-
-  node-api-headers@1.5.0:
-    resolution: {integrity: sha512-Yi/FgnN8IU/Cd6KeLxyHkylBUvDTsSScT0Tna2zTrz8klmc8qF2ppj6Q1LHsmOueJWhigQwR4cO2p0XBGW5IaQ==}
 
   opentype.js@1.3.4:
     resolution: {integrity: sha512-d2JE9RP/6uagpQAVtJoF0pJJA/fgai89Cc50Yp0EJHk+eLp6QQ7gBoblsnubRULNY132I0J1QKMJ+JTbMqz4sw==}
@@ -1987,8 +1981,6 @@ snapshots:
   nanoid@3.3.11: {}
 
   natural-compare@1.4.0: {}
-
-  node-api-headers@1.5.0: {}
 
   opentype.js@1.3.4:
     dependencies:

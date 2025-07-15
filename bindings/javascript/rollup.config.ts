@@ -78,19 +78,14 @@ export default defineConfig([
       {
         name: 'virtual:wasm-dts',
         generateBundle(_, bundles) {
-          // console.log(bundles)
           for (const key in bundles) {
             const chunk = bundles[key]
             if (chunk.type === 'chunk') {
               const pos = chunk.code.indexOf('declare function createSubsetEngine(binary: Uint8Array): FontSubset;')
               chunk.code = chunk.code.slice(0, pos) +
-                'declare const ttf: FontSubset;\n' +
+                'export declare const ttf: FontSubset;\n' +
                 chunk.code.slice(pos + 'declare function createSubsetEngine(binary: Uint8Array): FontSubset;'.length)
               chunk.code = chunk.code.replace('declare function createSubsetEngine(binary: Uint8Array): FontSubset;', '')
-              chunk.code = chunk.code.replace(
-                `export { ERR_CODE, FontSubset, createSubsetEngine, createSubsetFromText }`,
-                'export { ERR_CODE, FontSubset, createSubsetFromText, ttf }'
-              )
             }
           }
         }
