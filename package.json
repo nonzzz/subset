@@ -1,11 +1,15 @@
 {
-  "description": "A tool to extract ttf/otf subsets.",
+  "description": "A tool to extract ttf subsets.",
   "scripts": {
     "bench": "tsx bench.ts",
     "build:wasm": "zig build wasm && rollup --config ./bindings/javascript/rollup.config.ts --configPlugin swc3",
     "build:cli": "pnpm run --dir ./npm/cli build",
     "dev:web": "vite --config ./web/vite.config.mts",
     "build:web": "pnpm run build:wasm && vite build --config ./web/vite.config.mts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nonzzz/ttf.git"
   },
   "keywords": [],
   "author": "Kanno",

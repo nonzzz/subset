@@ -1,10 +1,16 @@
 {
   "name": "ttf.zig",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "author": "kanno",
+  "license": "MIT",
   "description": "A Zig library for subsetting TTF fonts.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nonzzz/ttf.git"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.mjs",

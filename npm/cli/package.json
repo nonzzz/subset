@@ -1,6 +1,12 @@
 {
   "name": "@ttf.zig/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "author": "kanno",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nonzzz/ttf.git"
+  },
   "bin": {
     "ttf-subset": "./dist/index.js"
   },
