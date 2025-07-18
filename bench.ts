@@ -4,6 +4,7 @@ import { bench, group, run } from 'mitata'
 import opentype from 'opentype.js'
 import path from 'path'
 import { createSubsetEngine } from './bindings/javascript/wasm'
+import { ttf2woff } from './deps/ttf2woff'
 
 const wasmPath = path.join(__dirname, 'zig-out', 'ttf.wasm')
 const ttfPath = path.join(__dirname, 'fonts', 'LXGWBright-Light.ttf')
@@ -108,6 +109,17 @@ group('subset generation - long text', () => {
 
   bench('opentype.js', () => {
     createOpentypeSubset(otFont, longText)
+  })
+})
+
+group('woff generation', () => {
+  bench('WASM', async () => {
+    const engine = createSubsetEngine(wasmBinary)
+    await engine.ttfToWoff(fontData)
+    engine.destroy()
+  })
+  bench('javascript', () => {
+    ttf2woff(fontData)
   })
 })
 

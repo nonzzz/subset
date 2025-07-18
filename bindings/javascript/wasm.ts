@@ -161,6 +161,51 @@ export class FontSubset {
     }
   }
 
+  async ttfToWoff(fontData: Uint8Array): Promise<Uint8Array | null> {
+    if (!zlib && IS_NODE_PLATFORM && ZLIB_WRAP) {
+      zlib = await ZLIB_WRAP
+    }
+    const fontPtr = this.instance.allocate_memory(fontData.length)
+    if (fontPtr === null) { return null }
+
+    const outputPtrPtr = this.instance.allocate_memory(4)
+    const outputLenPtr = this.instance.allocate_memory(4)
+
+    if (outputPtrPtr === null || outputLenPtr === null) {
+      this.instance.free_memory(fontPtr, fontData.length)
+      if (outputPtrPtr) { this.instance.free_memory(outputPtrPtr, 4) }
+      if (outputLenPtr) { this.instance.free_memory(outputLenPtr, 4) }
+      return null
+    }
+
+    try {
+      const memory = new Uint8Array(this.instance.memory.buffer)
+      memory.set(fontData, fontPtr)
+
+      const errorCode = this.instance.convert_ttf_to_woff(fontPtr, fontData.length, outputPtrPtr, outputLenPtr)
+
+      if (errorCode !== ERR_CODE.SUCCESS) {
+        return null
+      }
+
+      const outputPtr = new Uint32Array(this.instance.memory.buffer, outputPtrPtr, 1)[0]
+      const outputLen = new Uint32Array(this.instance.memory.buffer, outputLenPtr, 1)[0]
+
+      if (outputLen === 0) { return new Uint8Array(0) }
+
+      const result = new Uint8Array(this.instance.memory.buffer, outputPtr, outputLen)
+      const copy = new Uint8Array(result)
+
+      this.instance.free_memory(outputPtr, outputLen)
+
+      return copy
+    } finally {
+      this.instance.free_memory(fontPtr, fontData.length)
+      this.instance.free_memory(outputPtrPtr, 4)
+      this.instance.free_memory(outputLenPtr, 4)
+    }
+  }
+
   static createSubsetFromText(instance: WASMInstance, fontData: Uint8Array, text: string): Uint8Array | null {
     const fontPtr = instance.allocate_memory(fontData.length)
     if (fontPtr === null) { return null }
