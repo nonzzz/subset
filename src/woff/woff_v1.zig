@@ -190,7 +190,7 @@ fn mock_compressor(allocator: Allocator, data: []const u8) ![]u8 {
     return compressed_slice;
 }
 
-test "woff " {
+test "woff" {
     const allocator = std.testing.allocator;
     const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "LXGWBright-Light.ttf" }) catch unreachable;
     defer allocator.free(font_file_path);
