@@ -1,6 +1,7 @@
 const std = @import("std");
 const lib = @import("ttf");
 
+const woff = lib.woff;
 var gpa = std.heap.wasm_allocator;
 
 const SubsetHandle = opaque {};
@@ -14,6 +15,7 @@ pub const ErrorCode = enum(u32) {
     invalid_utf8 = 4,
     missing_table = 5,
     out_of_bounds = 6,
+    compression_failed = 7,
 };
 
 export fn allocate_memory(size: u32) ?[*]u8 {
@@ -43,6 +45,58 @@ extern "env" fn host_read_file(path_ptr: [*]const u8, path_len: u32, out_ptr: *[
 extern "env" fn host_write_file(path_ptr: [*]const u8, path_len: u32, data_ptr: [*]const u8, data_len: u32) bool;
 
 extern "env" fn host_head_modified_time(out_timestamp: *u64) bool;
+
+extern "env" fn host_compress_data(input_ptr: [*]const u8, input_len: u32, output_ptr: *[*]u8, output_len: *u32) bool;
+
+fn wasm_compressor(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    var output_ptr: [*]u8 = undefined;
+    var output_len: u32 = undefined;
+
+    if (!host_compress_data(data.ptr, @intCast(data.len), &output_ptr, &output_len)) {
+        return woff.woff_impl.Error.CompressionFailed;
+    }
+
+    const result = try allocator.alloc(u8, output_len);
+    @memcpy(result, output_ptr[0..output_len]);
+
+    free_memory(output_ptr, output_len);
+
+    return result;
+}
+
+export fn convert_ttf_to_woff(font_ptr: [*]const u8, font_len: u32, output_ptr: *[*]u8, output_len: *u32) ErrorCode {
+    const font_data = font_ptr[0..font_len];
+
+    const woff_data = woff.woff_v1.ttf_to_woff_v1(gpa, @constCast(font_data), wasm_compressor) catch |err| {
+        return switch (err) {
+            error.OutOfMemory => .allocation_failed,
+            error.CompressionFailed => .compression_failed,
+            else => .parse_failed,
+        };
+    };
+
+    output_ptr.* = woff_data.ptr;
+    output_len.* = @intCast(woff_data.len);
+
+    return .success;
+}
+
+export fn convert_ttf_to_woff_from_reader(reader_handle: ?*FontReaderHandle, output_ptr: *[*]u8, output_len: *u32) ErrorCode {
+    const reader: *lib.FontReader = @ptrCast(@alignCast(reader_handle orelse return .invalid_pointer));
+
+    const woff_data = woff.woff_v1.ttf_woff_v1_with_parser(gpa, &reader.subset.parser, wasm_compressor) catch |err| {
+        return switch (err) {
+            error.OutOfMemory => .allocation_failed,
+            error.CompressionFailed => .compression_failed,
+            else => .parse_failed,
+        };
+    };
+
+    output_ptr.* = woff_data.ptr;
+    output_len.* = @intCast(woff_data.len);
+
+    return .success;
+}
 
 export fn load_font_from_file(path_ptr: [*]const u8, path_len: u32) ?*FontReaderHandle {
     var data_ptr: [*]u8 = undefined;
@@ -278,6 +332,7 @@ export fn get_error_message_length(error_code: ErrorCode) u32 {
         .invalid_utf8 => "Invalid UTF-8 text",
         .missing_table => "Required font table missing",
         .out_of_bounds => "Index out of bounds",
+        .compression_failed => "Compression failed",
     };
     return @intCast(message.len);
 }
@@ -291,6 +346,7 @@ export fn get_error_message(error_code: ErrorCode, buffer_ptr: [*]u8, buffer_len
         .invalid_utf8 => "Invalid UTF-8 text",
         .missing_table => "Required font table missing",
         .out_of_bounds => "Index out of bounds",
+        .compression_failed => "Compression failed",
     };
 
     if (buffer_len < message.len) return .out_of_bounds;

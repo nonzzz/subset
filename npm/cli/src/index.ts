@@ -5,8 +5,8 @@ import { readFileSync, statSync, writeFileSync } from 'fs'
 import mri from 'mri'
 import { extname, resolve } from 'path'
 import { globSync } from 'tinyglobby'
-import { ttf } from 'ttf.zig'
-import { ttf2woff } from './woff'
+import { convertTtfToWoff, ttf } from 'ttf.zig'
+// import { ttf2woff } from './woff'
 
 interface CliOptions {
   content?: string[]
@@ -150,7 +150,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function main() {
+async function main() {
   const args = mri<CliOptions>(process.argv.slice(2), {
     alias: {
       c: 'content',
@@ -265,7 +265,11 @@ function main() {
 
       if (outputPath.endsWith('.woff')) {
         logVerbose(`Converting subset font to WOFF format for ${outputPath}...`, options.verbose || false)
-        outputData = ttf2woff(subsetFont)
+        const woffData = await convertTtfToWoff(subsetFont)
+        if (!woffData) {
+          throw new Error(`Failed to convert TTF to WOFF for ${outputPath}`)
+        }
+        outputData = woffData
       } else {
         outputData = subsetFont
       }
@@ -290,4 +294,4 @@ function main() {
   }
 }
 
-main()
+main().catch(() => {})

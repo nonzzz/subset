@@ -2,6 +2,7 @@ const std = @import("std");
 const mod = @import("./parser.zig");
 const table = @import("./table/mod.zig");
 const Table = @import("./table.zig");
+pub const woff = @import("./woff/mod.zig");
 
 const byte_writer = @import("./byte_writer.zig");
 const ByteWriter = byte_writer.ByteWriter;
@@ -1491,18 +1492,3 @@ pub fn get_font_info_from_file(allocator: Allocator, font_path: []const u8) !Fon
 pub fn get_font_info_from_buffer(allocator: Allocator, font_data: []const u8) !FontReader {
     return FontReader.init(allocator, font_data);
 }
-
-// test "create subset from file" {
-//     const allocator = std.testing.allocator;
-//     const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "Caveat-VariableFont_wght.ttf" }) catch unreachable;
-//     defer allocator.free(font_file_path);
-//     const file_content = try fs.cwd().readFileAlloc(allocator, font_file_path, std.math.maxInt(usize));
-//     defer allocator.free(file_content);
-
-//     const subset = try create_subset_from_file(allocator, font_file_path, "A");
-//     defer allocator.free(subset);
-//     try fs.cwd().writeFile(fs.Dir.WriteFileOptions{
-//         .sub_path = "subset.ttf",
-//         .data = subset,
-//     });
-// }

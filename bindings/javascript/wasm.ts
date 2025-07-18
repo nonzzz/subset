@@ -40,6 +40,9 @@ export interface WASMInstance {
   ) => number
   save_subset_to_file: (subset_handle: number, path_ptr: number, path_len: number) => number
 
+  convert_ttf_to_woff: (font_ptr: number, font_len: number, output_ptr: number, output_len: number) => number
+  convert_ttf_to_woff_from_reader: (reader_handle: number, output_ptr: number, output_len: number) => number
+
   get_error_message_length: (error_code: number) => number
   get_error_message: (error_code: number, buffer_ptr: number, buffer_len: number) => number
 }
@@ -48,6 +51,7 @@ export interface WASMZigEnv extends WebAssembly.ModuleImports {
   host_read_file: (pathPtr: number, pathLen: number, outPtrPtr: number, outLenPtr: number) => boolean
   host_write_file: (pathPtr: number, pathLen: number, dataPtr: number, dataLen: number) => boolean
   host_head_modified_time: (outTimestampPtr: number) => boolean
+  host_compress_data: (inputPtr: number, inputLen: number, outputPtrPtr: number, outputLenPtr: number) => boolean
 }
 
 const MAC_EPOCH_OFFSET = 2082844800 // Offset from Unix epoch to Mac epoch
@@ -59,7 +63,8 @@ export const ERR_CODE = {
   PARSE_FAILED: 3,
   INVALID_UTF8: 4,
   MISSING_TABLE: 5,
-  OUT_OF_BOUNDS: 6
+  OUT_OF_BOUNDS: 6,
+  COMPRESSION_FAILED: 7
 } as const
 
 export interface FontMetrics {
@@ -87,9 +92,13 @@ const IS_NODE_PLATFORM = typeof process !== 'undefined' && process.versions?.nod
 let FS_WRAP: Promise<typeof import('fs')> | null = null
 let fs: typeof import('fs') | null = null
 
+let ZLIB_WRAP: Promise<typeof import('zlib')> | null = null
+let zlib: typeof import('zlib') | null = null
+
 if (IS_NODE_PLATFORM) {
   try {
     FS_WRAP = import('fs').then((fsModule) => fsModule.default || fsModule)
+    ZLIB_WRAP = import('zlib').then((zlibModule) => zlibModule.default || zlibModule)
   } catch {
   }
 }
@@ -105,6 +114,51 @@ export class FontSubset {
 
   constructor(instance: WASMInstance) {
     this.instance = instance
+  }
+
+  static async convertTtfToWoff(instance: WASMInstance, fontData: Uint8Array) {
+    if (!zlib && IS_NODE_PLATFORM && ZLIB_WRAP) {
+      zlib = await ZLIB_WRAP
+    }
+    const fontPtr = instance.allocate_memory(fontData.length)
+    if (fontPtr === null) { return null }
+
+    const outputPtrPtr = instance.allocate_memory(4)
+    const outputLenPtr = instance.allocate_memory(4)
+
+    if (outputPtrPtr === null || outputLenPtr === null) {
+      instance.free_memory(fontPtr, fontData.length)
+      if (outputPtrPtr) { instance.free_memory(outputPtrPtr, 4) }
+      if (outputLenPtr) { instance.free_memory(outputLenPtr, 4) }
+      return null
+    }
+
+    try {
+      const memory = new Uint8Array(instance.memory.buffer)
+      memory.set(fontData, fontPtr)
+
+      const errorCode = instance.convert_ttf_to_woff(fontPtr, fontData.length, outputPtrPtr, outputLenPtr)
+
+      if (errorCode !== ERR_CODE.SUCCESS) {
+        return null
+      }
+
+      const outputPtr = new Uint32Array(instance.memory.buffer, outputPtrPtr, 1)[0]
+      const outputLen = new Uint32Array(instance.memory.buffer, outputLenPtr, 1)[0]
+
+      if (outputLen === 0) { return new Uint8Array(0) }
+
+      const result = new Uint8Array(instance.memory.buffer, outputPtr, outputLen)
+      const copy = new Uint8Array(result)
+
+      instance.free_memory(outputPtr, outputLen)
+
+      return copy
+    } finally {
+      instance.free_memory(fontPtr, fontData.length)
+      instance.free_memory(outputPtrPtr, 4)
+      instance.free_memory(outputLenPtr, 4)
+    }
   }
 
   static createSubsetFromText(instance: WASMInstance, fontData: Uint8Array, text: string): Uint8Array | null {
@@ -504,6 +558,34 @@ export function createSubsetEngine(binary: Uint8Array): FontSubset {
       } catch {
         return false
       }
+    },
+    host_compress_data(inputPtr, inputLen, outputPtrPtr, outputLenPtr) {
+      try {
+        if (!WASM_INSTANCE) { return false }
+        if (IS_NODE_PLATFORM && zlib) {
+          const memory = new Uint8Array(WASM_INSTANCE.memory.buffer)
+          const inputData = memory.slice(inputPtr, inputPtr + inputLen)
+
+          const compressedData = zlib.deflateSync(inputData)
+
+          const outputPtr = WASM_INSTANCE.allocate_memory(compressedData.length)
+          if (outputPtr === null) { return false }
+
+          const outputMemory = new Uint8Array(WASM_INSTANCE.memory.buffer)
+          outputMemory.set(compressedData, outputPtr)
+
+          const outPtrView = new Uint32Array(WASM_INSTANCE.memory.buffer, outputPtrPtr, 1)
+          const outLenView = new Uint32Array(WASM_INSTANCE.memory.buffer, outputLenPtr, 1)
+
+          outPtrView[0] = outputPtr
+          outLenView[0] = compressedData.length
+
+          return true
+        }
+        return false
+      } catch {
+        return false
+      }
     }
   }
   WASM_INSTANCE = new WebAssembly.Instance(compiledWASM, { env }).exports as unknown as WASMInstance
@@ -517,4 +599,9 @@ export function createSubsetFromText(
 ): Uint8Array | null {
   if (!WASM_INSTANCE) { return null }
   return FontSubset.createSubsetFromText(WASM_INSTANCE, fontData, text)
+}
+
+export async function convertTtfToWoff(fontData: Uint8Array) {
+  if (!WASM_INSTANCE) { return null }
+  return FontSubset.convertTtfToWoff(WASM_INSTANCE, fontData)
 }
