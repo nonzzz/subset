@@ -1,12 +1,13 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
 const mod = @import("../parser.zig");
-const Allocator = std.mem.Allocator;
 const Head = @import("../table/head.zig");
 const byte_writer = @import("../byte_writer.zig");
+const Impl = @import("./impl.zig");
 
 const zlib = std.compress.zlib;
 const fs = std.fs;
+const Allocator = std.mem.Allocator;
 
 const Parser = mod.Parser;
 const ByteWriter = byte_writer.ByteWriter;
@@ -18,12 +19,8 @@ pub const Woff = struct {
 
     allocator: Allocator,
     parser: *Parser,
-    compressor: *const fn (allocator: Allocator, data: []const u8) anyerror![]u8,
+    compressor: Impl.Compressor,
 
-    pub const Error = error{
-        InvalidSfntVersion,
-        CompressionFailed,
-    };
     pub const TableRecord = struct {
         tag: mod.TableTag,
         offset: u32,
@@ -36,16 +33,25 @@ pub const Woff = struct {
     pub fn init(
         allocator: Allocator,
         parser: *Parser,
-        compressor: *const fn (allocator: Allocator, data: []const u8) anyerror![]u8,
-    ) Self {
-        return Self{
+        compressor: Impl.Compressor,
+    ) Impl {
+        const self = allocator.create(Self) catch unreachable;
+        self.* = Self{
             .allocator = allocator,
             .parser = parser,
             .compressor = compressor,
         };
+        return Impl{
+            .ptr = self,
+            .vtable = &.{
+                .as_woff = as_woff,
+            },
+        };
     }
 
-    pub fn as_woff(self: *Self) ![]u8 {
+    fn as_woff(ptr: *anyopaque) ![]u8 {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        defer self.allocator.destroy(self);
         var buffer = ByteWriter(u8).init(self.allocator);
 
         try self.parser.reader.seek_to(0);
@@ -159,11 +165,7 @@ pub const Woff = struct {
     }
 };
 
-pub fn ttf_to_woff_v1(
-    allocator: Allocator,
-    data: []u8,
-    compressor: *const fn (allocator: Allocator, data: []const u8) anyerror![]u8,
-) ![]u8 {
+pub fn ttf_to_woff_v1(allocator: Allocator, data: []u8, compressor: Impl.Compressor) ![]u8 {
     var parser = try Parser.init(allocator, data);
     defer parser.deinit();
     try parser.parse();
@@ -171,11 +173,7 @@ pub fn ttf_to_woff_v1(
     return woff.as_woff();
 }
 
-pub fn ttf_woff_v1_with_parser(
-    allocator: Allocator,
-    parser: *Parser,
-    compressor: *const fn (allocator: Allocator, data: []const u8) anyerror![]u8,
-) ![]u8 {
+pub fn ttf_woff_v1_with_parser(allocator: Allocator, parser: *Parser, compressor: Impl.Compressor) ![]u8 {
     var woff = Woff.init(allocator, parser, compressor);
     return woff.as_woff();
 }
@@ -194,7 +192,6 @@ fn mock_compressor(allocator: Allocator, data: []const u8) ![]u8 {
 
 test "woff " {
     const allocator = std.testing.allocator;
-
     const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "LXGWBright-Light.ttf" }) catch unreachable;
     defer allocator.free(font_file_path);
 

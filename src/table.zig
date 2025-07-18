@@ -1,5 +1,4 @@
 const std = @import("std");
-const reader = @import("./byte_read.zig");
 
 const Allocator = std.mem.Allocator;
 
