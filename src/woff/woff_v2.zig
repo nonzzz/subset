@@ -37,19 +37,11 @@ fn write_uint_base_128(buffer: *ByteWriter(u8), value: u32) !void {
     }
 }
 
-fn calculate_uint_base_128_size(value: u32) u32 {
-    if (value < 0x80) return 1;
-
-    var val = value;
-    var size: u32 = 0;
-    while (val > 0) {
-        val >>= 7;
-        size += 1;
-    }
-    return size;
-}
-
-// https://www.w3.org/TR/WOFF2/
+/// SPEC: https://www.w3.org/TR/WOFF2/
+///
+/// Note This implementation isn't do fully optimized for WOFF2
+///
+/// To keep simple to implement, we don't use flags and other features
 pub const Woff = struct {
     const Self = @This();
 
@@ -60,9 +52,10 @@ pub const Woff = struct {
     pub const TableRecord = struct {
         flags: u8,
         tag: mod.TableTag,
-        orig_length: u32,
-        transform_length: u32,
-        compressed_data: []const u8,
+
+        len: u32,
+        start: u32,
+        end: u32,
     };
 
     pub fn init(
@@ -98,59 +91,67 @@ pub const Woff = struct {
         const num_tables = try self.parser.reader.read_u16_be();
 
         var woff2_tables = std.ArrayList(TableRecord).init(self.allocator);
-        defer {
-            for (woff2_tables.items) |rec| {
-                self.allocator.free(rec.compressed_data);
-            }
-            woff2_tables.deinit();
-        }
+        defer woff2_tables.deinit();
 
         var total_sfnt_size: u32 = 12 + num_tables * 16;
-        var total_compressed_size: u32 = 0;
-
         for (self.parser.table_records.items) |table_record| {
             const start = table_record.offset;
             const end = start + table_record.length;
-            const table_data = self.parser.buffer[start..end];
-            const compressed_data = try self.compressor(self.allocator, table_data);
-
-            const comp_length: u32 = @intCast(compressed_data.len);
             const orig_length: u32 = table_record.length;
 
             try woff2_tables.append(TableRecord{
                 .flags = 0,
                 .tag = table_record.tag,
-                .orig_length = orig_length,
-                .transform_length = orig_length,
-                .compressed_data = compressed_data,
+                .len = orig_length,
+                .start = start,
+                .end = end,
             });
-
-            total_compressed_size += comp_length;
-            total_sfnt_size += orig_length;
-            total_sfnt_size = (total_sfnt_size + 3) & ~@as(u32, 3);
         }
+        std.mem.sort(
+            TableRecord,
+            woff2_tables.items,
+            {},
+            struct {
+                fn less_than(_: void, lhs: TableRecord, rhs: TableRecord) bool {
+                    return lhs.start < rhs.start;
+                }
+            }.less_than,
+        );
 
-        var table_directory_size: u32 = 0;
+        // const min_start = woff2_tables.items[0].start;
+        // const max_end = woff2_tables.items[woff2_tables.items.len - 1].end;
+        // const total_table_buffer = self.parser.buffer[min_start..max_end];
+        // const compressed_data = try self.compressor(self.allocator, total_table_buffer);
+        var table_data = std.ArrayList(u8).init(self.allocator);
+        defer table_data.deinit();
+
         for (woff2_tables.items) |table| {
-            table_directory_size += 1;
-            if ((table.flags & 0x3F) == 0x3F) {
-                table_directory_size += 4;
-            }
-            table_directory_size += calculate_uint_base_128_size(table.orig_length);
-            if (table.orig_length != table.transform_length) {
-                table_directory_size += calculate_uint_base_128_size(table.transform_length);
-            }
+            const data = self.parser.buffer[table.start..table.end];
+            try table_data.appendSlice(data);
         }
+
+        const compressed_data = try self.compressor(self.allocator, table_data.items);
+
+        defer self.allocator.free(compressed_data);
+        total_sfnt_size += @intCast(table_data.items.len);
+        // add padding to align to 4 bytes
+        total_sfnt_size = (total_sfnt_size + 3) & ~@as(u32, 3);
+
+        const compressed_data_len: u32 = @intCast(compressed_data.len);
 
         const woff2_header_size: u32 = 48;
-        const total_size = woff2_header_size + table_directory_size + total_compressed_size;
+
+        var total_size = woff2_header_size + compressed_data_len;
 
         // woff2 header
         try buffer.write(u32, 0x774F4632, .big);
         try buffer.write(u32, sfnt, .big);
-        try buffer.write(u32, total_size, .big);
+        const woff2_length_start_offset: u32 = @intCast(buffer.len());
+        try buffer.write(u32, 0, .big);
         try buffer.write(u16, num_tables, .big);
         try buffer.write(u16, 0, .big);
+        try buffer.write(u32, total_sfnt_size, .big);
+        try buffer.write(u32, compressed_data_len, .big);
 
         if (self.parser.parsed_tables.get_table(.head)) |head_table| {
             const head = head_table.cast(Head);
@@ -169,24 +170,22 @@ pub const Woff = struct {
         try buffer.write(u32, 0, .big);
 
         for (woff2_tables.items) |table| {
+            const last_start: u32 = @intCast(buffer.len());
             try buffer.write(u8, table.flags, .big);
-
-            if ((table.flags & 0x3F) == 0x3F) {
-                const tag_bytes = table.tag.to_str();
-                try buffer.write_bytes(&tag_bytes);
-            }
-
-            try write_uint_base_128(&buffer, table.orig_length);
-            if (table.orig_length != table.transform_length) {
-                try write_uint_base_128(&buffer, table.transform_length);
-            }
+            try buffer.write_bytes(&table.tag.to_str());
+            try write_uint_base_128(&buffer, table.len);
+            try write_uint_base_128(&buffer, table.len);
+            const last_end: u32 = @intCast(buffer.len());
+            total_size += last_end - last_start;
         }
 
-        for (woff2_tables.items) |table| {
-            try buffer.write_bytes(table.compressed_data);
-        }
+        try buffer.write_bytes(compressed_data);
 
-        return buffer.to_owned_slice();
+        const cloned_slice = try buffer.to_owned_slice();
+        const woff2_length_bytes = std.mem.toBytes(std.mem.nativeToBig(u32, total_size));
+        @memcpy(cloned_slice[woff2_length_start_offset .. woff2_length_start_offset + 4], &woff2_length_bytes);
+
+        return cloned_slice;
     }
 };
 
@@ -205,7 +204,7 @@ pub fn ttf_woff_v2_with_parser(allocator: Allocator, parser: *Parser, compressor
 
 // brotli mock
 fn mock_compressor(allocator: Allocator, data: []const u8) ![]u8 {
-    var encoder = try brotli.Encoder.init(allocator, .{ .quality = 4 });
+    var encoder = try brotli.Encoder.init(allocator, .{ .quality = 4, .mode = .font });
     defer encoder.deinit();
     const compressed = try encoder.encode(data);
     return @constCast(compressed);
@@ -225,8 +224,8 @@ test "woff v2" {
 
     const woff_data = try ttf_woff_v2_with_parser(allocator, &parser, mock_compressor);
     defer allocator.free(woff_data);
-    // try fs.cwd().writeFile(fs.Dir.WriteFileOptions{
-    //     .sub_path = "test.woff2",
-    //     .data = woff_data,
-    // });
+    try fs.cwd().writeFile(fs.Dir.WriteFileOptions{
+        .sub_path = "test.woff2",
+        .data = woff_data,
+    });
 }

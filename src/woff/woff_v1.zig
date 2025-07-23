@@ -62,7 +62,8 @@ pub const Woff = struct {
             return error.InvalidSfntVersion;
         }
 
-        const num_tables = try self.parser.reader.read_u16_be();
+        // const num_tables = try self.parser.reader.read_u16_be();
+        const num_tables: u16 = @intCast(self.parser.table_records.items.len);
 
         var woff_tables = std.ArrayList(TableRecord).init(self.allocator);
         defer {
