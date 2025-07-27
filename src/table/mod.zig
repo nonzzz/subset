@@ -11,6 +11,8 @@ pub const Hmtx = @import("./hmtx.zig");
 pub const Loca = @import("./loca.zig");
 pub const Glyf = @import("./glyf.zig");
 
+pub const Table = @import("./impl.zig");
+
 test {
     _ = Head;
     _ = Hhea;

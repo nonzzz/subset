@@ -1,7 +1,7 @@
 const std = @import("std");
 const mod = @import("./parser.zig");
 const table = @import("./table/mod.zig");
-const Table = @import("./table.zig");
+const Table = table.Table;
 pub const woff = @import("./woff/mod.zig");
 
 const byte_writer = @import("./byte_writer.zig");

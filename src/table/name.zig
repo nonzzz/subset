@@ -1,6 +1,6 @@
 const std = @import("std");
 const reader = @import("../byte_read.zig");
-const Table = @import("../table.zig");
+const Table = @import("./impl.zig");
 const ParsedTables = @import("../parser.zig").ParsedTables;
 
 const Error = @import("./errors.zig").Error;

@@ -1,7 +1,7 @@
 const std = @import("std");
 const reader = @import("./byte_read.zig");
 const table = @import("./table/mod.zig");
-const Table = @import("./table.zig");
+const Table = table.Table;
 
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
