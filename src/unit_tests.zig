@@ -5,4 +5,5 @@ comptime {
     _ = @import("./lib.zig");
     _ = @import("./byte_writer.zig");
     _ = @import("woff/mod.zig");
+    _ = @import("lib2.zig");
 }
