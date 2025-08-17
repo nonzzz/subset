@@ -304,7 +304,7 @@ pub const Parser = struct {
         self.parsed_flags |= tag_bit;
     }
 
-    inline fn find_table_record(self: *Self, tag: TableTag) ?TableRecord {
+    pub inline fn find_table_record(self: *Self, tag: TableTag) ?TableRecord {
         for (self.table_records.items) |record| {
             if (record.tag == tag) return record;
         }

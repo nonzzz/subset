@@ -200,6 +200,11 @@ const Reader = struct {
         return gid;
     }
 
+    pub fn get_glyph_info_by_glyph_id(self: *Self, gid: u16) !Glyph {
+        _ = self; // autofix
+        _ = gid; // autofix
+    }
+
     pub fn get_glyph_info(self: *Self, code_point: u32) !Glyph {
         if (self.glyph_cache.get(code_point)) |glyph| {
             if (!glyph.is_empty()) {
@@ -289,6 +294,7 @@ const Subsetter = struct {
             }
         }
         try required_glyphs.put(0, Glyph{});
+
         try self.collect_glyph_ids_recursive(&required_glyphs);
         var glyph_ids = try self.allocator.alloc(u16, required_glyphs.count());
         defer self.allocator.free(glyph_ids);
@@ -299,6 +305,8 @@ const Subsetter = struct {
             i += 1;
         }
         std.sort.heap(u16, glyph_ids, {}, std.sort.asc(u16));
+        const b = try self.build_post_table(glyph_ids);
+        defer self.allocator.free(b);
     }
 
     fn collect_glyph_ids_recursive(self: *Self, required_glyphs: *AutoHashMap(u16, Glyph)) !void {
@@ -339,22 +347,15 @@ const Subsetter = struct {
         }
     }
 
+    fn get_default_binary_data(self: *Self, tag: parser.TableTag, end_position: ?usize) []const u8 {
+        const record = self.t.parser.find_table_record(tag).?;
+        const len = if (end_position) |pos| record.offset + pos else record.offset + record.length;
+        const table_data = self.t.parser.buffer[record.offset..len];
+        return table_data;
+    }
+
     fn build_name_table(self: *Self) []const u8 {
-        var name_pos: usize = 0;
-
-        for (self.t.parser.table_records.items, 0..) |record, i| {
-            if (record.tag == .name) {
-                name_pos = i;
-                break;
-            }
-        }
-
-        const name_table_offset = self.parser.table_records.items[name_pos].offset;
-        const name_table_size = self.t.parser.table_records.items[name_pos].length;
-
-        const name_table = self.t.parser.buffer[name_table_offset .. name_table_offset + name_table_size];
-
-        return name_table;
+        return self.get_default_binary_data(.name, null);
     }
 
     fn build_post_table(self: *Self, glyph_ids: []u16) ![]u8 {
@@ -365,40 +366,42 @@ const Subsetter = struct {
 
         errdefer buffer.deinit();
 
-        try buffer.write(u32, post.version, .big);
-        try buffer.write(i32, post.italic_angle, .big);
-        try buffer.write(i16, post.underline_position, .big);
-        try buffer.write(i16, post.underline_thickness, .big);
-        try buffer.write(u32, post.is_fixed_pitch, .big);
-        try buffer.write(u32, post.min_mem_type42, .big);
-        try buffer.write(u32, post.max_mem_type42, .big);
-        try buffer.write(u32, post.min_mem_type1, .big);
-        try buffer.write(u32, post.max_mem_type1, .big);
+        // const table_data = self.get_default_binary_data(.post, 32);
+
+        // try buffer.write_bytes(table_data);
 
         if (post.v2_data) |_| {
             try buffer.write(u16, @intCast(glyph_ids.len), .big);
 
-            var has_custom_names = false;
-            for (glyph_ids) |glyph_id| {
-                if (post.get_glyph_index(glyph_id)) |glyph_index| {
-                    try buffer.write(u16, glyph_index, .big);
-                    if (glyph_index >= 258) {
-                        has_custom_names = true;
-                    }
-                }
-            }
-            if (has_custom_names) {
-                for (glyph_ids) |glyph_id| {
-                    if (post.get_glyph_index(glyph_id)) |glyph_index| {
-                        if (glyph_index >= 258) {
-                            if (post.get_glyph_name(glyph_id)) |glyph_name| {
-                                try buffer.write_u8(@intCast(glyph_name.len));
-                                try buffer.write_bytes(glyph_name);
-                            }
-                        }
-                    }
-                }
-            }
+            // var has_custom_names = false;
+            // for (glyph_ids) |glyph_id| {
+            //     if (post.get_glyph_index(glyph_id)) |glyph_index| {
+            //         try buffer.write(u16, glyph_index, .big);
+            //         if (glyph_index >= 258) {
+            //             has_custom_names = true;
+            //         }
+            //     }
+            // }
+            // if (has_custom_names) {
+            //     for (glyph_ids) |glyph_id| {
+            //         if (post.get_glyph_index(glyph_id)) |glyph_index| {
+            //             if (glyph_index >= 258) {
+            //                 if (post.get_glyph_name(glyph_id)) |glyph_name| {
+            //                     try buffer.write_u8(@intCast(glyph_name.len));
+            //                     try buffer.write_bytes(glyph_name);
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
+            // var has_custom_names = false;
+            // _ = has_custom_names; // autofix
+
+            // for (glyph_ids) |glyph_id| {
+            //     _ = glyph_id; // autofix
+            //     //
+            // }
+            // std.debug.print("{any}\n", .{post.v2_data.?});
         }
 
         return buffer.to_owned_slice();
@@ -408,14 +411,16 @@ const Subsetter = struct {
 test "ttf.zig" {
     const fs = std.fs;
     const allocator = std.testing.allocator;
-    const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "LXGWBright-Light.ttf" }) catch unreachable;
+    const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "Caveat-VariableFont_wght.ttf" }) catch unreachable;
     defer allocator.free(font_file_path);
     const file_content = try fs.cwd().readFileAlloc(allocator, font_file_path, std.math.maxInt(usize));
     defer allocator.free(file_content);
     var font = try ttf.init(allocator, file_content);
     defer font.deinit();
     var subbsetter = try font.subsetter();
-    try subbsetter.build_subset(BuildSubsetterOptions{ .input_text = "绪方理奈" });
+    const input_text = &[_]u8{ 0xC5, 0x84 };
+    std.debug.print("{s}\n", .{input_text});
+    try subbsetter.build_subset(BuildSubsetterOptions{ .input_text = input_text });
     // var reader = try font.reader();
     // const code_point: u32 = 'a';
     // const e = try reader.get_glyph_info(code_point);
