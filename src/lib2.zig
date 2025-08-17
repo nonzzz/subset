@@ -8,6 +8,8 @@ const Allocator = std.mem.Allocator;
 
 const Parser = parser.Parser;
 
+const UTF8 = std.unicode.Utf8View;
+
 const Writer = byte_writer.ByteWriter;
 
 const AutoHashMap = std.AutoHashMap;
@@ -102,11 +104,16 @@ pub const BoundingBox = struct {
     }
 };
 
+const GlyphInfo = struct {
+    bbox: BoundingBox,
+    is_composite: bool,
+};
+
 pub const Glyph = struct {
     id: u16 = 0,
     advance_width: u16 = 0,
     left_side_bearing: i16 = 0,
-    data: []const u8 = &[_]u8{},
+    is_composite: bool = false,
     bbox: BoundingBox = BoundingBox.empty(),
     has_outline: bool = false,
     _initialized: bool = false,
@@ -118,6 +125,11 @@ pub const Glyph = struct {
     pub fn mark_as_done(self: *Glyph) void {
         self._initialized = true;
     }
+};
+
+pub const BuildSubsetterOptions = struct {
+    modified_time: ?i64 = null,
+    input_text: []const u8 = &[_]u8{},
 };
 
 const Reader = struct {
@@ -201,34 +213,40 @@ const Reader = struct {
         const hmtx = hmtx_table.cast(table.Hmtx);
         const metrics = hmtx.get_metrics(gid);
 
-        const bbox = blk: {
-            const loca_table = self.t.parser.parsed_tables.loca.?;
-            const loca = loca_table.cast(table.Loca);
+        const loca_table = self.t.parser.parsed_tables.loca.?;
+        const loca = loca_table.cast(table.Loca);
+        const has_outline = loca.has_glyph_data(gid);
+
+        const glyph_info = if (has_outline) info: {
             const glyf_table = self.t.parser.parsed_tables.glyf.?;
             const glyf = glyf_table.cast(table.Glyf);
             const offset = loca.get_glyph_offset(gid).?;
             const parsed_glyf = try glyf.parse_glyph(offset);
             defer parsed_glyf.deinit();
             const header = parsed_glyf.get_header();
-            break :blk BoundingBox{
+            const bbox = BoundingBox{
                 .x_min = header.x_min,
                 .y_min = header.y_min,
                 .x_max = header.x_max,
                 .y_max = header.y_max,
             };
+            const is_composite = header.is_composite();
+            break :info GlyphInfo{
+                .bbox = bbox,
+                .is_composite = is_composite,
+            };
+        } else GlyphInfo{
+            .bbox = BoundingBox.empty(),
+            .is_composite = false,
         };
 
-        const has_outline = blk: {
-            const loca_table = self.t.parser.parsed_tables.loca.?;
-            const loca = loca_table.cast(table.Loca);
-            break :blk loca.has_glyph_data(gid);
-        };
         var glyh = Glyph{
             .id = gid,
             .advance_width = metrics.advance_width,
             .left_side_bearing = metrics.left_side_bearing,
             .has_outline = has_outline,
-            .bbox = bbox,
+            .bbox = glyph_info.bbox,
+            .is_composite = glyph_info.is_composite,
         };
         glyh.mark_as_done();
         try self.glyph_cache.put(code_point, glyh);
@@ -243,9 +261,10 @@ const Subsetter = struct {
     allocator: Allocator,
     const Self = @This();
 
-    pub fn init(t: *ttf) Subsetter {
+    pub fn init(t: *ttf) !Subsetter {
         return Self{
             .t = t,
+            .r = try t.reader(),
             .allocator = t.allocator,
         };
     }
@@ -254,23 +273,151 @@ const Subsetter = struct {
 
     }
 
-    pub fn build_subset(self: *Self) ![]u8 {
+    pub fn build_subset(self: *Self, options: BuildSubsetterOptions) !void {
         var buffer = Writer(u8).init(self.allocator);
         errdefer buffer.deinit();
+        var required_glyphs = AutoHashMap(u16, Glyph).init(self.allocator);
+        defer required_glyphs.deinit();
+
+        var utf8_view = try UTF8.init(options.input_text);
+        var iterator = utf8_view.iterator();
+
+        while (iterator.nextCodepoint()) |codepoint| {
+            const glyph = try self.r.get_glyph_info(codepoint);
+            if (glyph.id != 0) {
+                try required_glyphs.put(glyph.id, glyph);
+            }
+        }
+        try required_glyphs.put(0, Glyph{});
+        try self.collect_glyph_ids_recursive(&required_glyphs);
+        var glyph_ids = try self.allocator.alloc(u16, required_glyphs.count());
+        defer self.allocator.free(glyph_ids);
+        var iter = required_glyphs.iterator();
+        var i: usize = 0;
+        while (iter.next()) |entry| {
+            glyph_ids[i] = entry.key_ptr.*;
+            i += 1;
+        }
+        std.sort.heap(u16, glyph_ids, {}, std.sort.asc(u16));
+    }
+
+    fn collect_glyph_ids_recursive(self: *Self, required_glyphs: *AutoHashMap(u16, Glyph)) !void {
+        var new_glyphs = AutoHashMap(u16, Glyph).init(self.allocator);
+        defer new_glyphs.deinit();
+
+        var iter = required_glyphs.iterator();
+        while (iter.next()) |entry| {
+            const glyph_id = entry.key_ptr.*;
+            const glyph = entry.value_ptr.*;
+
+            if (glyph.is_composite) {
+                const glyf_table = self.t.parser.parsed_tables.glyf.?;
+                const glyf = glyf_table.cast(table.Glyf);
+                const loca_table = self.t.parser.parsed_tables.loca.?;
+                const loca = loca_table.cast(table.Loca);
+                const glyph_offset = loca.get_glyph_offset(glyph_id).?;
+                var parsed_glyph = try glyf.parse_glyph(glyph_offset);
+                defer parsed_glyph.deinit();
+                const composite_glyph = parsed_glyph.composite;
+
+                for (composite_glyph.components) |component| {
+                    const component_glyph_id = component.glyph_index;
+                    if (!required_glyphs.contains(component_glyph_id)) {
+                        const component_glyph = try self.r.get_glyph_info(component_glyph_id);
+                        try new_glyphs.put(component_glyph_id, component_glyph);
+                    }
+                }
+            }
+        }
+
+        if (new_glyphs.count() > 0) {
+            var new_iter = new_glyphs.iterator();
+            while (new_iter.next()) |entry| {
+                try required_glyphs.put(entry.key_ptr.*, entry.value_ptr.*);
+            }
+            try self.collect_glyph_ids_recursive(required_glyphs);
+        }
+    }
+
+    fn build_name_table(self: *Self) []const u8 {
+        var name_pos: usize = 0;
+
+        for (self.t.parser.table_records.items, 0..) |record, i| {
+            if (record.tag == .name) {
+                name_pos = i;
+                break;
+            }
+        }
+
+        const name_table_offset = self.parser.table_records.items[name_pos].offset;
+        const name_table_size = self.t.parser.table_records.items[name_pos].length;
+
+        const name_table = self.t.parser.buffer[name_table_offset .. name_table_offset + name_table_size];
+
+        return name_table;
+    }
+
+    fn build_post_table(self: *Self, glyph_ids: []u16) ![]u8 {
+        var post_table = self.t.parser.parsed_tables.post.?;
+        const post = post_table.cast(table.Post);
+
+        var buffer = Writer(u8).init(self.allocator);
+
+        errdefer buffer.deinit();
+
+        try buffer.write(u32, post.version, .big);
+        try buffer.write(i32, post.italic_angle, .big);
+        try buffer.write(i16, post.underline_position, .big);
+        try buffer.write(i16, post.underline_thickness, .big);
+        try buffer.write(u32, post.is_fixed_pitch, .big);
+        try buffer.write(u32, post.min_mem_type42, .big);
+        try buffer.write(u32, post.max_mem_type42, .big);
+        try buffer.write(u32, post.min_mem_type1, .big);
+        try buffer.write(u32, post.max_mem_type1, .big);
+
+        if (post.v2_data) |_| {
+            try buffer.write(u16, @intCast(glyph_ids.len), .big);
+
+            var has_custom_names = false;
+            for (glyph_ids) |glyph_id| {
+                if (post.get_glyph_index(glyph_id)) |glyph_index| {
+                    try buffer.write(u16, glyph_index, .big);
+                    if (glyph_index >= 258) {
+                        has_custom_names = true;
+                    }
+                }
+            }
+            if (has_custom_names) {
+                for (glyph_ids) |glyph_id| {
+                    if (post.get_glyph_index(glyph_id)) |glyph_index| {
+                        if (glyph_index >= 258) {
+                            if (post.get_glyph_name(glyph_id)) |glyph_name| {
+                                try buffer.write_u8(@intCast(glyph_name.len));
+                                try buffer.write_bytes(glyph_name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return buffer.to_owned_slice();
     }
 };
 
 test "ttf.zig" {
     const fs = std.fs;
     const allocator = std.testing.allocator;
-    const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "sub5.ttf" }) catch unreachable;
+    const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "LXGWBright-Light.ttf" }) catch unreachable;
     defer allocator.free(font_file_path);
     const file_content = try fs.cwd().readFileAlloc(allocator, font_file_path, std.math.maxInt(usize));
     defer allocator.free(file_content);
     var font = try ttf.init(allocator, file_content);
     defer font.deinit();
-    var reader = try font.reader();
-    const code_point: u32 = 'a';
-    const e = try reader.get_glyph_info(code_point);
-    std.debug.print("glyph: {any}\n", .{e});
+    var subbsetter = try font.subsetter();
+    try subbsetter.build_subset(BuildSubsetterOptions{ .input_text = "绪方理奈" });
+    // var reader = try font.reader();
+    // const code_point: u32 = 'a';
+    // const e = try reader.get_glyph_info(code_point);
+    // std.debug.print("glyph: {any}\n", .{e});
 }
