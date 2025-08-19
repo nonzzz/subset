@@ -137,17 +137,24 @@ const Reader = struct {
 
     t: *ttf,
     allocator: Allocator,
-    glyph_cache: AutoHashMap(u32, Glyph),
+    code_point_cache: AutoHashMap(u32, []u16),
+    glyph_cache: AutoHashMap(u16, Glyph),
 
     pub fn init(t: *ttf) Reader {
         return Self{
             .t = t,
             .allocator = t.allocator,
-            .glyph_cache = AutoHashMap(u32, Glyph).init(t.allocator),
+            .code_point_cache = AutoHashMap(u32, []u16).init(t.allocator),
+            .glyph_cache = AutoHashMap(u16, Glyph).init(t.allocator),
         };
     }
 
     pub fn deinit(self: *Self) void {
+        var code_point_iter = self.code_point_cache.iterator();
+        while (code_point_iter.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.code_point_cache.deinit();
         self.glyph_cache.deinit();
     }
 
@@ -187,32 +194,35 @@ const Reader = struct {
         };
     }
 
-    pub fn get_glyph_id(self: *Self, code_point: u32) !u16 {
-        if (self.glyph_cache.get(code_point)) |glyph| {
-            return glyph.id;
+    pub fn get_glyph_ids_by_code_point(self: *Self, code_point: u32) ![]u16 {
+        if (self.code_point_cache.get(code_point)) |glyph_ids| {
+            return glyph_ids;
         }
+
         const cmap_table = self.t.parser.parsed_tables.cmap.?;
         const cmap = cmap_table.cast(table.Cmap);
         const gid = cmap.get_glyph_index(code_point).?;
-        try self.glyph_cache.put(code_point, Glyph{
-            .id = gid,
-        });
-        return gid;
-    }
 
-    pub fn get_glyph_info_by_glyph_id(self: *Self, gid: u16) !Glyph {
-        _ = self; // autofix
-        _ = gid; // autofix
-    }
+        const main_glyph = try self.get_glyph_info(gid);
 
-    pub fn get_glyph_info(self: *Self, code_point: u32) !Glyph {
-        if (self.glyph_cache.get(code_point)) |glyph| {
-            if (!glyph.is_empty()) {
-                return glyph;
-            }
+        var glyph_ids = std.ArrayList(u16).init(self.allocator);
+        errdefer glyph_ids.deinit();
+
+        try glyph_ids.append(gid);
+
+        if (main_glyph.is_composite) {
+            try self.collect_composite_glyph_ids(gid, &glyph_ids);
         }
 
-        const gid = try self.get_glyph_id(code_point);
+        const result = try glyph_ids.toOwnedSlice();
+        try self.code_point_cache.put(code_point, result);
+        return result;
+    }
+
+    pub fn get_glyph_info(self: *Self, gid: u16) !Glyph {
+        if (self.glyph_cache.get(gid)) |glyph| {
+            return glyph;
+        }
 
         const hmtx_table = self.t.parser.parsed_tables.hmtx.?;
         const hmtx = hmtx_table.cast(table.Hmtx);
@@ -244,8 +254,7 @@ const Reader = struct {
             .bbox = BoundingBox.empty(),
             .is_composite = false,
         };
-
-        var glyh = Glyph{
+        var glyph = Glyph{
             .id = gid,
             .advance_width = metrics.advance_width,
             .left_side_bearing = metrics.left_side_bearing,
@@ -253,10 +262,48 @@ const Reader = struct {
             .bbox = glyph_info.bbox,
             .is_composite = glyph_info.is_composite,
         };
-        glyh.mark_as_done();
-        try self.glyph_cache.put(code_point, glyh);
+        glyph.mark_as_done();
 
-        return glyh;
+        try self.glyph_cache.put(gid, glyph);
+
+        return glyph;
+    }
+
+    fn collect_composite_glyph_ids(self: *Self, gid: u16, glyph_ids: *std.ArrayList(u16)) !void {
+        const glyf_table = self.t.parser.parsed_tables.glyf.?;
+        const glyf = glyf_table.cast(table.Glyf);
+        const loca_table = self.t.parser.parsed_tables.loca.?;
+        const loca = loca_table.cast(table.Loca);
+
+        const glyph_offset = loca.get_glyph_offset(gid).?;
+        var parsed_glyph = try glyf.parse_glyph(glyph_offset);
+        defer parsed_glyph.deinit();
+
+        switch (parsed_glyph) {
+            .simple => {},
+            .composite => |composite_glyph| {
+                for (composite_glyph.components) |component| {
+                    const component_gid = component.glyph_index;
+
+                    var already_exists = false;
+                    for (glyph_ids.items) |existing_gid| {
+                        if (existing_gid == component_gid) {
+                            already_exists = true;
+                            break;
+                        }
+                    }
+
+                    if (!already_exists) {
+                        try glyph_ids.append(component_gid);
+
+                        const component_glyph = try self.get_glyph_info(component_gid);
+                        if (component_glyph.is_composite) {
+                            try self.collect_composite_glyph_ids(component_gid, glyph_ids);
+                        }
+                    }
+                }
+            },
+        }
     }
 };
 
@@ -284,20 +331,26 @@ const Subsetter = struct {
         var required_glyphs = AutoHashMap(u16, Glyph).init(self.allocator);
         defer required_glyphs.deinit();
 
+        const notdef_glyph = try self.r.get_glyph_info(0);
+        try required_glyphs.put(0, notdef_glyph);
+
         var utf8_view = try UTF8.init(options.input_text);
         var iterator = utf8_view.iterator();
 
         while (iterator.nextCodepoint()) |codepoint| {
-            const glyph = try self.r.get_glyph_info(codepoint);
-            if (glyph.id != 0) {
-                try required_glyphs.put(glyph.id, glyph);
+            const glyph_ids = try self.r.get_glyph_ids_by_code_point(codepoint);
+
+            for (glyph_ids) |gid| {
+                if (!required_glyphs.contains(gid)) {
+                    const glyph = try self.r.get_glyph_info(gid);
+                    try required_glyphs.put(gid, glyph);
+                }
             }
         }
-        try required_glyphs.put(0, Glyph{});
 
-        try self.collect_glyph_ids_recursive(&required_glyphs);
         var glyph_ids = try self.allocator.alloc(u16, required_glyphs.count());
         defer self.allocator.free(glyph_ids);
+
         var iter = required_glyphs.iterator();
         var i: usize = 0;
         while (iter.next()) |entry| {
@@ -305,46 +358,9 @@ const Subsetter = struct {
             i += 1;
         }
         std.sort.heap(u16, glyph_ids, {}, std.sort.asc(u16));
-        const b = try self.build_post_table(glyph_ids);
-        defer self.allocator.free(b);
-    }
 
-    fn collect_glyph_ids_recursive(self: *Self, required_glyphs: *AutoHashMap(u16, Glyph)) !void {
-        var new_glyphs = AutoHashMap(u16, Glyph).init(self.allocator);
-        defer new_glyphs.deinit();
-
-        var iter = required_glyphs.iterator();
-        while (iter.next()) |entry| {
-            const glyph_id = entry.key_ptr.*;
-            const glyph = entry.value_ptr.*;
-
-            if (glyph.is_composite) {
-                const glyf_table = self.t.parser.parsed_tables.glyf.?;
-                const glyf = glyf_table.cast(table.Glyf);
-                const loca_table = self.t.parser.parsed_tables.loca.?;
-                const loca = loca_table.cast(table.Loca);
-                const glyph_offset = loca.get_glyph_offset(glyph_id).?;
-                var parsed_glyph = try glyf.parse_glyph(glyph_offset);
-                defer parsed_glyph.deinit();
-                const composite_glyph = parsed_glyph.composite;
-
-                for (composite_glyph.components) |component| {
-                    const component_glyph_id = component.glyph_index;
-                    if (!required_glyphs.contains(component_glyph_id)) {
-                        const component_glyph = try self.r.get_glyph_info(component_glyph_id);
-                        try new_glyphs.put(component_glyph_id, component_glyph);
-                    }
-                }
-            }
-        }
-
-        if (new_glyphs.count() > 0) {
-            var new_iter = new_glyphs.iterator();
-            while (new_iter.next()) |entry| {
-                try required_glyphs.put(entry.key_ptr.*, entry.value_ptr.*);
-            }
-            try self.collect_glyph_ids_recursive(required_glyphs);
-        }
+        // const b = try self.build_post_table(glyph_ids);
+        // defer self.allocator.free(b);
     }
 
     fn get_default_binary_data(self: *Self, tag: parser.TableTag, end_position: ?usize) []const u8 {
@@ -358,54 +374,54 @@ const Subsetter = struct {
         return self.get_default_binary_data(.name, null);
     }
 
-    fn build_post_table(self: *Self, glyph_ids: []u16) ![]u8 {
-        var post_table = self.t.parser.parsed_tables.post.?;
-        const post = post_table.cast(table.Post);
+    // fn build_post_table(self: *Self, glyph_ids: []u16) ![]u8 {
+    //     var post_table = self.t.parser.parsed_tables.post.?;
+    //     const post = post_table.cast(table.Post);
 
-        var buffer = Writer(u8).init(self.allocator);
+    //     var buffer = Writer(u8).init(self.allocator);
 
-        errdefer buffer.deinit();
+    //     errdefer buffer.deinit();
 
-        // const table_data = self.get_default_binary_data(.post, 32);
+    //     // const table_data = self.get_default_binary_data(.post, 32);
 
-        // try buffer.write_bytes(table_data);
+    //     // try buffer.write_bytes(table_data);
 
-        if (post.v2_data) |_| {
-            try buffer.write(u16, @intCast(glyph_ids.len), .big);
+    //     if (post.v2_data) |_| {
+    //         try buffer.write(u16, @intCast(glyph_ids.len), .big);
 
-            // var has_custom_names = false;
-            // for (glyph_ids) |glyph_id| {
-            //     if (post.get_glyph_index(glyph_id)) |glyph_index| {
-            //         try buffer.write(u16, glyph_index, .big);
-            //         if (glyph_index >= 258) {
-            //             has_custom_names = true;
-            //         }
-            //     }
-            // }
-            // if (has_custom_names) {
-            //     for (glyph_ids) |glyph_id| {
-            //         if (post.get_glyph_index(glyph_id)) |glyph_index| {
-            //             if (glyph_index >= 258) {
-            //                 if (post.get_glyph_name(glyph_id)) |glyph_name| {
-            //                     try buffer.write_u8(@intCast(glyph_name.len));
-            //                     try buffer.write_bytes(glyph_name);
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
-            // var has_custom_names = false;
-            // _ = has_custom_names; // autofix
+    //         // var has_custom_names = false;
+    //         // for (glyph_ids) |glyph_id| {
+    //         //     if (post.get_glyph_index(glyph_id)) |glyph_index| {
+    //         //         try buffer.write(u16, glyph_index, .big);
+    //         //         if (glyph_index >= 258) {
+    //         //             has_custom_names = true;
+    //         //         }
+    //         //     }
+    //         // }
+    //         // if (has_custom_names) {
+    //         //     for (glyph_ids) |glyph_id| {
+    //         //         if (post.get_glyph_index(glyph_id)) |glyph_index| {
+    //         //             if (glyph_index >= 258) {
+    //         //                 if (post.get_glyph_name(glyph_id)) |glyph_name| {
+    //         //                     try buffer.write_u8(@intCast(glyph_name.len));
+    //         //                     try buffer.write_bytes(glyph_name);
+    //         //                 }
+    //         //             }
+    //         //         }
+    //         //     }
+    //         // }
+    //         // var has_custom_names = false;
+    //         // _ = has_custom_names; // autofix
 
-            // for (glyph_ids) |glyph_id| {
-            //     _ = glyph_id; // autofix
-            //     //
-            // }
-            // std.debug.print("{any}\n", .{post.v2_data.?});
-        }
+    //         // for (glyph_ids) |glyph_id| {
+    //         //     _ = glyph_id; // autofix
+    //         //     //
+    //         // }
+    //         // std.debug.print("{any}\n", .{post.v2_data.?});
+    //     }
 
-        return buffer.to_owned_slice();
-    }
+    //     return buffer.to_owned_slice();
+    // }
 };
 
 test "ttf.zig" {
