@@ -307,27 +307,51 @@ const Reader = struct {
     }
 };
 
+const TableRecord = parser.TableRecord;
+
 const Subsetter = struct {
     t: *ttf,
     r: *Reader,
     allocator: Allocator,
+    main_buffer: Writer(u8),
+    table_infos: std.ArrayList(TableRecord),
+
     const Self = @This();
+
+    const Builder = struct {
+        tag: parser.TableTag,
+        build_fn: *const fn (*Subsetter, []u16) anyerror!void,
+        required: bool = true,
+        condition_fn: ?*const fn (*Subsetter) bool = null,
+    };
+
+    const ALL_TABLES = [_]Builder{
+        // .{ .tag = .head, .build_fn = build_head_table },
+        // .{ .tag = .hhea, .build_fn = build_hhea_table },
+        .{ .tag = .hmtx, .build_fn = build_hmtx_table },
+        .{ .tag = .maxp, .build_fn = build_maxp_table },
+        // .{ .tag = .cmap, .build_fn = build_cmap_table },
+        .{ .tag = .name, .build_fn = build_name_table },
+        .{ .tag = .glyf, .build_fn = build_glyf_table },
+        // .{ .tag = .loca, .build_fn = build_loca_table },
+        // .{ .tag = .post, .build_fn = build_post_table },
+    };
 
     pub fn init(t: *ttf) !Subsetter {
         return Self{
             .t = t,
             .r = try t.reader(),
             .allocator = t.allocator,
+            .main_buffer = Writer(u8).init(t.allocator),
+            .table_infos = std.ArrayList(TableRecord).init(t.allocator),
         };
     }
     pub fn deinit(self: *Self) void {
-        _ = self; // autofix
-
+        self.main_buffer.deinit();
+        self.table_infos.deinit();
     }
 
     pub fn build_subset(self: *Self, options: BuildSubsetterOptions) !void {
-        var buffer = Writer(u8).init(self.allocator);
-        errdefer buffer.deinit();
         var required_glyphs = AutoHashMap(u16, Glyph).init(self.allocator);
         defer required_glyphs.deinit();
 
@@ -359,10 +383,126 @@ const Subsetter = struct {
         }
         std.sort.heap(u16, glyph_ids, {}, std.sort.asc(u16));
 
-        // const b = try self.build_post_table(glyph_ids);
-        // defer self.allocator.free(b);
+        const b = try self.build_complete_font(glyph_ids);
+        defer self.allocator.free(b);
+        defer self.main_buffer.deinit();
     }
 
+    inline fn build_complete_font(self: *Self, glyph_ids: []u16) ![]u8 {
+        var tables_to_build = std.ArrayList(Builder).init(self.allocator);
+        defer tables_to_build.deinit();
+
+        for (ALL_TABLES) |table_builder| {
+            const should_build = table_builder.required or
+                (table_builder.condition_fn != null and table_builder.condition_fn.?(self));
+
+            if (should_build) {
+                try tables_to_build.append(table_builder);
+            }
+        }
+
+        std.sort.heap(Builder, tables_to_build.items, {}, struct {
+            fn lessThan(_: void, a: Builder, b: Builder) bool {
+                return std.mem.order(u8, &a.tag.to_str(), &b.tag.to_str()) == .lt;
+            }
+        }.lessThan);
+
+        const num_tables: u16 = @intCast(ALL_TABLES.len);
+        const sfnt_header_size: u16 = 12;
+        const table_record_size = 16 * num_tables;
+        const headers_size = sfnt_header_size + table_record_size;
+
+        // pre allocate space for headers
+        const zero_buffer = try self.allocator.alloc(u8, headers_size);
+        defer self.allocator.free(zero_buffer);
+        @memset(zero_buffer, 0);
+        try self.main_buffer.write_bytes(zero_buffer);
+
+        for (tables_to_build.items) |table_builder| {
+            try table_builder.build_fn(self, glyph_ids);
+        }
+        try self.write_sfnt_header();
+
+        // std.debug.print("{any}\n", .{self.main_buffer});
+
+        return self.main_buffer.to_owned_slice();
+    }
+
+    fn pad_to_alignment(self: *Self) !void {
+        const current_len = self.main_buffer.len();
+        const remainder = current_len % 4;
+        if (remainder != 0) {
+            const padding = 4 - remainder;
+            for (0..padding) |_| {
+                try self.main_buffer.write_u8(0);
+            }
+        }
+    }
+
+    fn calculate_checksum(data: []const u8) u32 {
+        var checksum: u32 = 0;
+        var i: usize = 0;
+
+        while (i + 3 < data.len) {
+            const word = (@as(u32, data[i]) << 24) |
+                (@as(u32, data[i + 1]) << 16) |
+                (@as(u32, data[i + 2]) << 8) |
+                (@as(u32, data[i + 3]));
+            checksum = checksum +% word;
+            i += 4;
+        }
+
+        if (i < data.len) {
+            var word: u32 = 0;
+            var shift: u5 = 24;
+            while (i < data.len) {
+                word |= @as(u32, data[i]) << shift;
+                shift -= 8;
+                i += 1;
+            }
+            checksum = checksum +% word;
+        }
+
+        return checksum;
+    }
+
+    fn write_sfnt_header(self: *Self) !void {
+        std.debug.assert(self.table_infos.items.len >= 1);
+        std.sort.heap(TableRecord, self.table_infos.items, {}, struct {
+            fn lessThan(_: void, a: TableRecord, b: TableRecord) bool {
+                return @intFromEnum(a.tag) < @intFromEnum(b.tag);
+            }
+        }.lessThan);
+
+        const num_tables: u16 = @intCast(self.table_infos.items.len);
+
+        var search_range: u16 = 16;
+        var entry_selector: u16 = 0;
+        while (search_range <= num_tables) {
+            search_range *= 2;
+            entry_selector += 1;
+        }
+        search_range /= 2;
+        const range_shift: u16 = num_tables * 16 - search_range;
+
+        const buffer = self.main_buffer.buffer.items;
+
+        std.mem.writeInt(u32, @ptrCast(buffer[0..4]), 0x00010000, .big);
+        std.mem.writeInt(u16, @ptrCast(buffer[4..6]), num_tables, .big);
+        std.mem.writeInt(u16, @ptrCast(buffer[6..8]), search_range, .big);
+        std.mem.writeInt(u16, @ptrCast(buffer[8..10]), @intCast(entry_selector), .big);
+        std.mem.writeInt(u16, @ptrCast(buffer[10..12]), range_shift, .big);
+
+        var record_offset: usize = 12;
+        for (self.table_infos.items) |table_info| {
+            const start = record_offset;
+            std.mem.writeInt(u32, @ptrCast(buffer[start .. start + 4]), @intFromEnum(table_info.tag), .big);
+            std.mem.writeInt(u32, @ptrCast(buffer[start + 4 .. start + 8]), table_info.checksum, .big);
+            std.mem.writeInt(u32, @ptrCast(buffer[start + 8 .. start + 12]), table_info.offset, .big);
+            std.mem.writeInt(u32, @ptrCast(buffer[start + 12 .. start + 16]), table_info.length, .big);
+            record_offset += 16;
+        }
+    }
     fn get_default_binary_data(self: *Self, tag: parser.TableTag, end_position: ?usize) []const u8 {
         const record = self.t.parser.find_table_record(tag).?;
         const len = if (end_position) |pos| record.offset + pos else record.offset + record.length;
@@ -370,58 +510,234 @@ const Subsetter = struct {
         return table_data;
     }
 
-    fn build_name_table(self: *Self) []const u8 {
-        return self.get_default_binary_data(.name, null);
+    fn build_name_table(self: *Self, glyph_ids: []u16) !void {
+        std.debug.assert(glyph_ids.len >= 1);
+        const start_offset: u32 = @intCast(self.main_buffer.len());
+
+        const table_data = self.get_default_binary_data(.name, null);
+        try self.main_buffer.write_bytes(table_data);
+
+        try self.pad_to_alignment();
+
+        const end_offset: u32 = @intCast(self.main_buffer.len());
+        const table_length = end_offset - start_offset;
+
+        try self.table_infos.append(TableRecord{
+            .tag = .name,
+            .offset = start_offset,
+            .length = table_length,
+            .checksum = calculate_checksum(self.main_buffer.buffer.items[start_offset..end_offset]),
+        });
     }
 
-    // fn build_post_table(self: *Self, glyph_ids: []u16) ![]u8 {
-    //     var post_table = self.t.parser.parsed_tables.post.?;
-    //     const post = post_table.cast(table.Post);
+    fn build_maxp_table(self: *Self, glyph_ids: []u16) !void {
+        const start_offset: u32 = @intCast(self.main_buffer.len());
+        const maxp_table = self.t.parser.parsed_tables.maxp.?;
+        const maxp = maxp_table.cast(table.Maxp);
+        try self.main_buffer.write(u32, maxp.version, .big);
+        try self.main_buffer.write(u16, @intCast(glyph_ids.len), .big);
 
-    //     var buffer = Writer(u8).init(self.allocator);
+        if (maxp.version == 0x00010000) {
+            const loca_table = self.t.parser.parsed_tables.loca.?;
+            const loca = loca_table.cast(table.Loca);
+            const glyf_table = self.t.parser.parsed_tables.glyf.?;
+            const glyf = glyf_table.cast(table.Glyf);
 
-    //     errdefer buffer.deinit();
+            // rewrite max_points .. max_composite_contoures
+            var max_points: u16 = 0;
+            var max_contours: u16 = 0;
+            var max_composite_points: u16 = 0;
+            var max_composite_contours: u16 = 0;
 
-    //     // const table_data = self.get_default_binary_data(.post, 32);
+            for (glyph_ids) |glyph_id| {
+                if (loca.get_glyph_offset(glyph_id)) |glyph_offset| {
+                    if (glyf.parse_glyph(glyph_offset)) |parsed_glyph| {
+                        defer parsed_glyph.deinit();
 
-    //     // try buffer.write_bytes(table_data);
+                        switch (parsed_glyph) {
+                            .simple => |simple| {
+                                if (simple.x_coordinates.len > 0) {
+                                    max_points = @max(max_points, @as(u16, @intCast(simple.x_coordinates.len)));
+                                    max_contours = @max(max_contours, @as(u16, @intCast(simple.end_pts_of_contours.len)));
+                                }
+                            },
+                            .composite => |composite| {
+                                max_composite_points = @max(max_composite_points, @as(u16, @intCast(composite.components.len)));
+                                max_composite_contours = @max(max_composite_contours, @as(u16, @intCast(composite.components.len)));
+                            },
+                        }
+                    } else |_| {
+                        continue;
+                    }
+                }
+            }
 
-    //     if (post.v2_data) |_| {
-    //         try buffer.write(u16, @intCast(glyph_ids.len), .big);
+            const full_maxp_data = self.get_default_binary_data(.maxp, null);
+            const offset = 6 + (4 * 2);
+            const rest_data = full_maxp_data[offset..];
 
-    //         // var has_custom_names = false;
-    //         // for (glyph_ids) |glyph_id| {
-    //         //     if (post.get_glyph_index(glyph_id)) |glyph_index| {
-    //         //         try buffer.write(u16, glyph_index, .big);
-    //         //         if (glyph_index >= 258) {
-    //         //             has_custom_names = true;
-    //         //         }
-    //         //     }
-    //         // }
-    //         // if (has_custom_names) {
-    //         //     for (glyph_ids) |glyph_id| {
-    //         //         if (post.get_glyph_index(glyph_id)) |glyph_index| {
-    //         //             if (glyph_index >= 258) {
-    //         //                 if (post.get_glyph_name(glyph_id)) |glyph_name| {
-    //         //                     try buffer.write_u8(@intCast(glyph_name.len));
-    //         //                     try buffer.write_bytes(glyph_name);
-    //         //                 }
-    //         //             }
-    //         //         }
-    //         //     }
-    //         // }
-    //         // var has_custom_names = false;
-    //         // _ = has_custom_names; // autofix
+            try self.main_buffer.write(u16, max_points, .big);
+            try self.main_buffer.write(u16, max_contours, .big);
+            try self.main_buffer.write(u16, max_composite_points, .big);
+            try self.main_buffer.write(u16, max_composite_contours, .big);
+            try self.main_buffer.write_bytes(rest_data);
+        }
+        try self.pad_to_alignment();
 
-    //         // for (glyph_ids) |glyph_id| {
-    //         //     _ = glyph_id; // autofix
-    //         //     //
-    //         // }
-    //         // std.debug.print("{any}\n", .{post.v2_data.?});
-    //     }
+        const end_offset: u32 = @intCast(self.main_buffer.len());
+        const table_length = end_offset - start_offset;
+        try self.table_infos.append(TableRecord{
+            .tag = .maxp,
+            .offset = start_offset,
+            .length = table_length,
+            .checksum = calculate_checksum(self.main_buffer.buffer.items[start_offset..end_offset]),
+        });
+    }
 
-    //     return buffer.to_owned_slice();
+    // fn build_loca_table(self: *Self, glyph_ids: []u16) !void {
+    //     _ = self; // autofix
+    //     _ = glyph_ids; // autofix
+    //     // _ = glyph_ids; // autofix
+    //     // const start_offset: u32 = @intCast(self.main_buffer.len());
+    //     // _ = start_offset; // autofix
+    //     // const
+
     // }
+    fn build_glyf_table(self: *Self, glyph_ids: []u16) !void {
+        const glyf_table = self.t.parser.parsed_tables.glyf.?;
+        const loca_table = self.t.parser.parsed_tables.loca.?;
+        const glyf = glyf_table.cast(table.Glyf);
+        const loca = loca_table.cast(table.Loca);
+
+        var glyph_id_mapping = AutoHashMap(u16, u16).init(self.allocator);
+        defer glyph_id_mapping.deinit();
+        for (glyph_ids, 0..) |glyph_id, new_id| {
+            try glyph_id_mapping.put(glyph_id, @intCast(new_id));
+        }
+        for (glyph_ids) |glyph_id| {
+            if (loca.get_glyph_offset(glyph_id)) |glyph_offset| {
+                const loca_offsets = loca.offsets;
+                const next_offset = if (glyph_id + 1 < loca_offsets.len)
+                    loca_offsets[glyph_id + 1]
+                else
+                    glyph_offset;
+
+                const glyph_length = if (next_offset > glyph_offset)
+                    next_offset - glyph_offset
+                else
+                    0;
+
+                if (glyph_length > 0) {
+                    if (glyf.parse_glyph(glyph_offset)) |parsed_glyph| {
+                        defer parsed_glyph.deinit();
+
+                        // switch (parsed_glyph) {
+                        //     .simple => |simple| {
+                        //         try write_glyph_header(&buffer, simple.header);
+                        //         try write_simple_glyph_data(&buffer, simple);
+                        //     },
+                        //     .composite => |composite| {
+                        //         try write_glyph_header(&buffer, composite.header);
+                        //         try write_composite_glyph_data(&buffer, composite, &glyph_id_mapping);
+                        //     },
+                        // }
+                    } else |_| {
+                        continue;
+                    }
+                }
+            }
+            self.pad_to_alignment();
+        }
+    }
+
+    // fn build_head_table(self: *Self) !void {
+    //     const start_offset: u32 = @intCast(self.main_buffer.len());
+
+    //     const table_data = self.get_default_binary_data(.head, null);
+    //     try self.main_buffer.write_bytes(table_data);
+
+    //     try self.pad_to_alignment();
+
+    //     const end_offset: u32 = @intCast(self.main_buffer.len());
+    //     const table_length = end_offset - start_offset;
+
+    //     try self.table_infos.append(TableRecord{
+    //         .tag = .head,
+    //         .offset = start_offset,
+    //         .length = table_length,
+    //         .checksum = self.calculate_checksum(self.main_buffer.items[start_offset..end_offset]),
+    //     });
+    // }
+
+    fn build_hmtx_table(self: *Self, glyph_ids: []u16) !void {
+        const start_offset: u32 = @intCast(self.main_buffer.len());
+        const hmtx_table = self.t.parser.parsed_tables.hmtx.?;
+        const hmtx = hmtx_table.cast(table.Hmtx);
+
+        for (glyph_ids) |gid| {
+            const metrics = hmtx.get_metrics(gid);
+            try self.main_buffer.write(u16, metrics.advance_width, .big);
+            try self.main_buffer.write(i16, metrics.left_side_bearing, .big);
+        }
+        try self.pad_to_alignment();
+
+        const end_offset: u32 = @intCast(self.main_buffer.len());
+        const table_length = end_offset - start_offset;
+        try self.table_infos.append(TableRecord{
+            .tag = .hmtx,
+            .offset = start_offset,
+            .length = table_length,
+            .checksum = calculate_checksum(self.main_buffer.buffer.items[start_offset..end_offset]),
+        });
+    }
+
+    fn build_post_table(self: *Self, glyph_ids: []u16) !void {
+        _ = self; // autofix
+        std.debug.assert(glyph_ids.len >= 1);
+        // var post_table = self.t.parser.parsed_tables.post.?;
+        // const post = post_table.cast(table.Post);
+
+        // const start_offset: u32 = @intCast(self.main_buffer.len());
+        // _ = start_offset; // autofix
+        // const table_data = self.get_default_binary_data(.post, 32);
+        // try self.main_buffer.write_bytes(table_data);
+
+        // if (post.v2_data) |_| {
+        //     self.main_buffer.write(u16, @intCast(glyph_ids.len), .big);
+
+        //     var has_custom_names = false;
+        //     for (glyph_ids) |glyph_id| {
+        //         if (post.get_glyph_index(glyph_id)) |glyph_index| {
+        //             try self.main_buffer.write(u16, glyph_index, .big);
+        //             if (glyph_index >= 258) {
+        //                 has_custom_names = true;
+        //             }
+        //         }
+        //     }
+        // if (has_custom_names) {
+        //     for (glyph_ids) |glyph_id| {
+        //         if (post.get_glyph_index(glyph_id)) |glyph_index| {
+        //             if (glyph_index >= 258) {
+        //                 if (post.get_glyph_name(glyph_id)) |glyph_name| {
+        //                     try buffer.write_u8(@intCast(glyph_name.len));
+        //                     try buffer.write_bytes(glyph_name);
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+        // var has_custom_names = false;
+        // _ = has_custom_names; // autofix
+
+        // for (glyph_ids) |glyph_id| {
+        //     _ = glyph_id; // autofix
+        //     //
+        // }
+        // std.debug.print("{any}\n", .{post.v2_data.?});
+        // }
+
+        // return buffer.to_owned_slice();
+    }
 };
 
 test "ttf.zig" {
