@@ -335,6 +335,7 @@ const Subsetter = struct {
         .{ .tag = .glyf, .build_fn = build_glyf_table },
         .{ .tag = .loca, .build_fn = build_loca_table },
         .{ .tag = .post, .build_fn = build_post_table },
+        .{ .tag = .os2, .build_fn = build_os2_table },
     };
 
     pub fn init(t: *ttf) !Subsetter {
@@ -411,7 +412,6 @@ const Subsetter = struct {
         const table_record_size = 16 * num_tables;
         const headers_size = sfnt_header_size + table_record_size;
 
-        // pre allocate space for headers
         const zero_buffer = try self.allocator.alloc(u8, headers_size);
         defer self.allocator.free(zero_buffer);
         @memset(zero_buffer, 0);
@@ -604,6 +604,181 @@ const Subsetter = struct {
         });
     }
 
+    fn build_os2_table(self: *Self, glyph_ids: []u16) !void {
+        const start_offset: u32 = @intCast(self.main_buffer.len());
+        const os2_table = self.t.parser.parsed_tables.os2.?;
+        const os2 = os2_table.cast(table.Os2);
+
+        try self.main_buffer.write(u16, os2.version.to_u16(), .big);
+
+        var avg_char_width: i16 = 0;
+        if (glyph_ids.len > 0) {
+            var total_width: u32 = 0;
+            var count: u32 = 0;
+
+            for (glyph_ids) |glyph_id| {
+                const glyph_info = try self.r.get_glyph_info(glyph_id);
+                total_width += glyph_info.advance_width;
+                count += 1;
+            }
+
+            if (count > 0) {
+                avg_char_width = @intCast(total_width / count);
+            } else if (os2.v0_data) |v0| {
+                avg_char_width = v0.x_avg_char_width;
+            }
+        } else if (os2.v0_data) |v0| {
+            avg_char_width = v0.x_avg_char_width;
+        }
+
+        try self.main_buffer.write(i16, avg_char_width, .big);
+
+        const v0 = os2.v0_data.?;
+
+        try self.main_buffer.write(u16, v0.us_weight_class, .big);
+        try self.main_buffer.write(u16, v0.us_width_class, .big);
+        try self.main_buffer.write(u16, v0.fs_type, .big);
+        try self.main_buffer.write(i16, v0.y_subscript_x_size, .big);
+        try self.main_buffer.write(i16, v0.y_subscript_y_size, .big);
+        try self.main_buffer.write(i16, v0.y_subscript_x_offset, .big);
+        try self.main_buffer.write(i16, v0.y_subscript_y_offset, .big);
+        try self.main_buffer.write(i16, v0.y_superscript_x_size, .big);
+        try self.main_buffer.write(i16, v0.y_superscript_y_size, .big);
+        try self.main_buffer.write(i16, v0.y_superscript_x_offset, .big);
+        try self.main_buffer.write(i16, v0.y_superscript_y_offset, .big);
+        try self.main_buffer.write(i16, v0.y_strikeout_size, .big);
+        try self.main_buffer.write(i16, v0.y_strikeout_position, .big);
+        try self.main_buffer.write(i16, v0.s_family_class, .big);
+
+        try self.main_buffer.write_bytes(&v0.panose);
+
+        var unicode_ranges: [4]u32 = [_]u32{0} ** 4;
+
+        var code_point_iter = self.r.code_point_cache.iterator();
+        while (code_point_iter.next()) |entry| {
+            const codepoint = entry.key_ptr.*;
+            const cached_glyph_ids = entry.value_ptr.*;
+
+            var in_subset = false;
+            for (cached_glyph_ids) |cached_glyph_id| {
+                for (glyph_ids) |subset_glyph_id| {
+                    if (subset_glyph_id == cached_glyph_id) {
+                        in_subset = true;
+                        break;
+                    }
+                }
+                if (in_subset) break;
+            }
+
+            if (in_subset) {
+                if (codepoint <= 0x007F) {
+                    unicode_ranges[0] |= 1 << 0;
+                } else if (codepoint <= 0x00FF) {
+                    unicode_ranges[0] |= 1 << 1;
+                } else if (codepoint <= 0x017F) {
+                    unicode_ranges[0] |= 1 << 2;
+                } else if (codepoint <= 0x024F) {
+                    unicode_ranges[0] |= 1 << 3;
+                }
+            }
+        }
+
+        try self.main_buffer.write(u32, unicode_ranges[0], .big);
+        try self.main_buffer.write(u32, unicode_ranges[1], .big);
+        try self.main_buffer.write(u32, unicode_ranges[2], .big);
+        try self.main_buffer.write(u32, unicode_ranges[3], .big);
+
+        try self.main_buffer.write_bytes(&v0.ach_vend_id);
+        try self.main_buffer.write(u16, v0.fs_selection, .big);
+
+        var first_char_index: u16 = 0xFFFF;
+        var last_char_index: u16 = 0;
+
+        code_point_iter = self.r.code_point_cache.iterator();
+        while (code_point_iter.next()) |entry| {
+            const codepoint = entry.key_ptr.*;
+            const cached_glyph_ids = entry.value_ptr.*;
+
+            var in_subset = false;
+            for (cached_glyph_ids) |cached_glyph_id| {
+                for (glyph_ids) |subset_glyph_id| {
+                    if (subset_glyph_id == cached_glyph_id) {
+                        in_subset = true;
+                        break;
+                    }
+                }
+                if (in_subset) break;
+            }
+
+            if (in_subset and codepoint <= 0xFFFF) {
+                const cp16: u16 = @intCast(codepoint);
+                first_char_index = @min(first_char_index, cp16);
+                last_char_index = @max(last_char_index, cp16);
+            }
+        }
+
+        if (first_char_index == 0xFFFF) {
+            first_char_index = v0.us_first_char_index;
+            last_char_index = v0.us_last_char_index;
+        }
+
+        try self.main_buffer.write(u16, first_char_index, .big);
+        try self.main_buffer.write(u16, last_char_index, .big);
+        try self.main_buffer.write(i16, v0.s_typo_ascender, .big);
+        try self.main_buffer.write(i16, v0.s_typo_descender, .big);
+        try self.main_buffer.write(i16, v0.s_typo_line_gap, .big);
+        try self.main_buffer.write(u16, v0.us_win_ascent, .big);
+        try self.main_buffer.write(u16, v0.us_win_descent, .big);
+
+        if (os2.version.to_u16() >= 1) {
+            if (os2.v1_data) |v1| {
+                try self.main_buffer.write(u32, v1.ul_code_page_range1, .big);
+                try self.main_buffer.write(u32, v1.ul_code_page_range2, .big);
+            } else {
+                try self.main_buffer.write(u32, 0, .big);
+                try self.main_buffer.write(u32, 0, .big);
+            }
+        }
+
+        if (os2.version.to_u16() >= 2) {
+            if (os2.v2_data) |v2| {
+                try self.main_buffer.write(i16, v2.sx_height, .big);
+                try self.main_buffer.write(i16, v2.s_cap_height, .big);
+                try self.main_buffer.write(u16, v2.us_default_char, .big);
+                try self.main_buffer.write(u16, v2.us_break_char, .big);
+                try self.main_buffer.write(u16, v2.us_max_context, .big);
+            } else {
+                try self.main_buffer.write(i16, 0, .big);
+                try self.main_buffer.write(i16, 0, .big);
+                try self.main_buffer.write(u16, 0, .big);
+                try self.main_buffer.write(u16, 32, .big);
+                try self.main_buffer.write(u16, 0, .big);
+            }
+        }
+
+        if (os2.version.to_u16() >= 5) {
+            if (os2.v5_data) |v5| {
+                try self.main_buffer.write(u16, v5.us_lower_optical_point_size, .big);
+                try self.main_buffer.write(u16, v5.us_upper_optical_point_size, .big);
+            } else {
+                try self.main_buffer.write(u16, 0, .big);
+                try self.main_buffer.write(u16, 0xFFFF, .big);
+            }
+        }
+
+        try self.pad_to_alignment();
+
+        const end_offset: u32 = @intCast(self.main_buffer.len());
+        const table_length = end_offset - start_offset;
+
+        try self.table_infos.append(TableRecord{
+            .tag = .os2,
+            .offset = start_offset,
+            .length = table_length,
+            .checksum = calculate_checksum(self.main_buffer.buffer.items[start_offset..end_offset]),
+        });
+    }
+
     fn build_name_table(self: *Self, glyph_ids: []u16) !void {
         std.debug.assert(glyph_ids.len >= 1);
         const start_offset: u32 = @intCast(self.main_buffer.len());
@@ -637,7 +812,6 @@ const Subsetter = struct {
             const glyf_table = self.t.parser.parsed_tables.glyf.?;
             const glyf = glyf_table.cast(table.Glyf);
 
-            // rewrite max_points .. max_composite_contoures
             var max_points: u16 = 0;
             var max_contours: u16 = 0;
             var max_composite_points: u16 = 0;
@@ -921,76 +1095,68 @@ const Subsetter = struct {
         var codepoint_to_new_glyph = AutoHashMap(u32, u16).init(self.allocator);
         defer codepoint_to_new_glyph.deinit();
 
+        var glyph_id_mapping = AutoHashMap(u16, u16).init(self.allocator);
+        defer glyph_id_mapping.deinit();
+
+        for (glyph_ids, 0..) |glyph_id, new_index| {
+            try glyph_id_mapping.put(glyph_id, @intCast(new_index));
+        }
+
         var code_point_iter = self.r.code_point_cache.iterator();
         while (code_point_iter.next()) |entry| {
             const codepoint = entry.key_ptr.*;
             const old_glyph_ids = entry.value_ptr.*;
 
             for (old_glyph_ids) |old_glyph_id| {
-                for (glyph_ids, 0..) |selected_glyph_id, new_index| {
-                    if (selected_glyph_id == old_glyph_id) {
-                        try codepoint_to_new_glyph.put(codepoint, @intCast(new_index));
-                        break;
-                    }
+                if (glyph_id_mapping.get(old_glyph_id)) |new_glyph_id| {
+                    try codepoint_to_new_glyph.put(codepoint, new_glyph_id);
+                    break;
                 }
             }
         }
 
-        try self.main_buffer.write(u16, 0, .big);
-        try self.main_buffer.write(u16, 1, .big);
+        if (codepoint_to_new_glyph.count() == 0) {
+            try self.create_minimal_cmap();
+            return;
+        }
 
-        try self.main_buffer.write(u16, 3, .big);
-        try self.main_buffer.write(u16, 1, .big);
-        try self.main_buffer.write(u32, 12, .big);
-
-        const subtable_start = self.main_buffer.len();
-        try self.main_buffer.write(u16, 4, .big);
-        try self.main_buffer.write(u16, 32, .big);
-        try self.main_buffer.write(u16, 0, .big);
-        try self.main_buffer.write(u16, 4, .big);
-        try self.main_buffer.write(u16, 4, .big);
-        try self.main_buffer.write(u16, 1, .big);
-        try self.main_buffer.write(u16, 0, .big);
-
-        var min_char: u16 = 0xFFFF;
-        var max_char: u16 = 0;
-
+        var has_high_codepoints = false;
+        var max_codepoint: u32 = 0;
         var codepoint_iter = codepoint_to_new_glyph.iterator();
         while (codepoint_iter.next()) |entry| {
-            const cp = entry.key_ptr.*;
-            if (cp <= 0xFFFF) {
-                const cp16: u16 = @intCast(cp);
-                min_char = @min(min_char, cp16);
-                max_char = @max(max_char, cp16);
+            const codepoint = entry.key_ptr.*;
+            max_codepoint = @max(max_codepoint, codepoint);
+            if (codepoint > 0xFFFF) {
+                has_high_codepoints = true;
             }
         }
 
-        if (min_char == 0xFFFF) {
-            min_char = 0;
-            max_char = 0;
+        try self.main_buffer.write(u16, 0, .big);
+
+        if (has_high_codepoints) {
+            try self.main_buffer.write(u16, 2, .big);
+
+            try self.main_buffer.write(u16, 3, .big);
+            try self.main_buffer.write(u16, 1, .big);
+            try self.main_buffer.write(u32, 20, .big);
+
+            try self.main_buffer.write(u16, 3, .big);
+            try self.main_buffer.write(u16, 10, .big);
+            const format12_offset = try self.calculate_format4_size(codepoint_to_new_glyph, false) + 20;
+            try self.main_buffer.write(u32, format12_offset, .big);
+
+            try self.generate_format4_subtable(codepoint_to_new_glyph, false);
+
+            try self.generate_format12_subtable(codepoint_to_new_glyph);
+        } else {
+            try self.main_buffer.write(u16, 1, .big);
+
+            try self.main_buffer.write(u16, 3, .big);
+            try self.main_buffer.write(u16, 1, .big);
+            try self.main_buffer.write(u32, 12, .big);
+
+            try self.generate_format4_subtable(codepoint_to_new_glyph, true);
         }
-
-        try self.main_buffer.write(u16, max_char, .big);
-        try self.main_buffer.write(u16, 0xFFFF, .big);
-
-        try self.main_buffer.write(u16, 0, .big);
-
-        try self.main_buffer.write(u16, min_char, .big);
-        try self.main_buffer.write(u16, 0xFFFF, .big);
-
-        try self.main_buffer.write(i16, 0, .big);
-        try self.main_buffer.write(i16, 1, .big);
-
-        try self.main_buffer.write(u16, 4, .big);
-        try self.main_buffer.write(u16, 0, .big);
-
-        try self.main_buffer.write(u16, 0, .big);
-        try self.main_buffer.write(u16, 0, .big);
-
-        const subtable_end = self.main_buffer.len();
-        const actual_length: u16 = @intCast(subtable_end - subtable_start);
-        const buffer_items = self.main_buffer.buffer.items;
-        std.mem.writeInt(u16, buffer_items[subtable_start + 2 .. subtable_start + 4][0..2], actual_length, .big);
 
         try self.pad_to_alignment();
 
@@ -1005,6 +1171,235 @@ const Subsetter = struct {
         });
     }
 
+    fn create_minimal_cmap(self: *Self) !void {
+        try self.main_buffer.write(u16, 0, .big);
+        try self.main_buffer.write(u16, 1, .big);
+
+        try self.main_buffer.write(u16, 3, .big);
+        try self.main_buffer.write(u16, 1, .big);
+        try self.main_buffer.write(u32, 12, .big);
+
+        try self.main_buffer.write(u16, 4, .big);
+        try self.main_buffer.write(u16, 32, .big);
+        try self.main_buffer.write(u16, 0, .big);
+        try self.main_buffer.write(u16, 4, .big);
+        try self.main_buffer.write(u16, 4, .big);
+        try self.main_buffer.write(u16, 1, .big);
+        try self.main_buffer.write(u16, 0, .big);
+
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+
+        try self.main_buffer.write(u16, 0, .big);
+
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+
+        try self.main_buffer.write(i16, 1, .big);
+        try self.main_buffer.write(i16, 1, .big);
+
+        try self.main_buffer.write(u16, 0, .big);
+        try self.main_buffer.write(u16, 0, .big);
+    }
+
+    fn calculate_format4_size(self: *Self, codepoint_to_glyph: AutoHashMap(u32, u16), include_all: bool) !u32 {
+        var codepoints = std.ArrayList(u32).init(self.allocator);
+        defer codepoints.deinit();
+
+        var iter = codepoint_to_glyph.iterator();
+        while (iter.next()) |entry| {
+            const codepoint = entry.key_ptr.*;
+            if (include_all or codepoint <= 0xFFFF) {
+                try codepoints.append(codepoint);
+            }
+        }
+
+        if (codepoints.items.len == 0) {
+            return 32;
+        }
+
+        std.sort.heap(u32, codepoints.items, {}, std.sort.asc(u32));
+
+        var segments = std.ArrayList(struct { start: u16, end: u16 }).init(self.allocator);
+        defer segments.deinit();
+
+        var current_start: u16 = @intCast(codepoints.items[0]);
+        var current_end: u16 = current_start;
+
+        for (codepoints.items[1..]) |cp| {
+            const cp16: u16 = @intCast(cp);
+            if (cp16 == current_end + 1) {
+                current_end = cp16;
+            } else {
+                try segments.append(.{ .start = current_start, .end = current_end });
+                current_start = cp16;
+                current_end = cp16;
+            }
+        }
+        try segments.append(.{ .start = current_start, .end = current_end });
+
+        const seg_count = segments.items.len + 1;
+        return @intCast(16 + seg_count * 8);
+    }
+
+    fn generate_format4_subtable(self: *Self, codepoint_to_glyph: AutoHashMap(u32, u16), include_all: bool) !void {
+        var codepoints = std.ArrayList(u32).init(self.allocator);
+        defer codepoints.deinit();
+
+        var iter = codepoint_to_glyph.iterator();
+        while (iter.next()) |entry| {
+            const codepoint = entry.key_ptr.*;
+            if (include_all or codepoint <= 0xFFFF) {
+                try codepoints.append(codepoint);
+            }
+        }
+
+        if (codepoints.items.len == 0) {
+            try self.create_minimal_format4_subtable();
+            return;
+        }
+
+        std.sort.heap(u32, codepoints.items, {}, std.sort.asc(u32));
+
+        var segments = std.ArrayList(struct { start: u16, end: u16, glyph_id: u16 }).init(self.allocator);
+        defer segments.deinit();
+
+        var current_start: u16 = @intCast(codepoints.items[0]);
+        var current_end: u16 = current_start;
+        var start_glyph_id = codepoint_to_glyph.get(codepoints.items[0]).?;
+
+        for (codepoints.items[1..]) |cp| {
+            const cp16: u16 = @intCast(cp);
+            const glyph_id = codepoint_to_glyph.get(cp).?;
+
+            if (cp16 == current_end + 1 and glyph_id == start_glyph_id + (current_end - current_start + 1)) {
+                current_end = cp16;
+            } else {
+                try segments.append(.{ .start = current_start, .end = current_end, .glyph_id = start_glyph_id });
+                current_start = cp16;
+                current_end = cp16;
+                start_glyph_id = glyph_id;
+            }
+        }
+        try segments.append(.{ .start = current_start, .end = current_end, .glyph_id = start_glyph_id });
+
+        const seg_count = segments.items.len + 1;
+        const seg_count_x2: u16 = @intCast(seg_count * 2);
+
+        var search_range: u16 = 2;
+        var entry_selector: u16 = 0;
+        while (search_range <= seg_count) {
+            search_range *= 2;
+            entry_selector += 1;
+        }
+        search_range /= 2;
+        const range_shift: u16 = seg_count_x2 - search_range;
+
+        const length: u16 = @intCast(16 + seg_count * 8);
+
+        try self.main_buffer.write(u16, 4, .big);
+        try self.main_buffer.write(u16, length, .big);
+        try self.main_buffer.write(u16, 0, .big);
+        try self.main_buffer.write(u16, seg_count_x2, .big);
+        try self.main_buffer.write(u16, search_range, .big);
+        try self.main_buffer.write(u16, entry_selector, .big);
+        try self.main_buffer.write(u16, range_shift, .big);
+
+        for (segments.items) |segment| {
+            try self.main_buffer.write(u16, segment.end, .big);
+        }
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+
+        try self.main_buffer.write(u16, 0, .big);
+
+        for (segments.items) |segment| {
+            try self.main_buffer.write(u16, segment.start, .big);
+        }
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+
+        for (segments.items) |segment| {
+            const id_delta: i16 = @intCast(@as(i32, segment.glyph_id) - @as(i32, segment.start));
+            try self.main_buffer.write(i16, id_delta, .big);
+        }
+        try self.main_buffer.write(i16, 1, .big);
+
+        for (0..seg_count) |_| {
+            try self.main_buffer.write(u16, 0, .big);
+        }
+    }
+
+    fn create_minimal_format4_subtable(self: *Self) !void {
+        try self.main_buffer.write(u16, 4, .big);
+        try self.main_buffer.write(u16, 32, .big);
+        try self.main_buffer.write(u16, 0, .big);
+        try self.main_buffer.write(u16, 4, .big);
+        try self.main_buffer.write(u16, 4, .big);
+        try self.main_buffer.write(u16, 1, .big);
+        try self.main_buffer.write(u16, 0, .big);
+
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+
+        try self.main_buffer.write(u16, 0, .big);
+
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+        try self.main_buffer.write(u16, 0xFFFF, .big);
+
+        try self.main_buffer.write(i16, 1, .big);
+        try self.main_buffer.write(i16, 1, .big);
+
+        try self.main_buffer.write(u16, 0, .big);
+        try self.main_buffer.write(u16, 0, .big);
+    }
+
+    fn generate_format12_subtable(self: *Self, codepoint_to_glyph: AutoHashMap(u32, u16)) !void {
+        var codepoints = std.ArrayList(u32).init(self.allocator);
+        defer codepoints.deinit();
+
+        var iter = codepoint_to_glyph.iterator();
+        while (iter.next()) |entry| {
+            try codepoints.append(entry.key_ptr.*);
+        }
+
+        std.sort.heap(u32, codepoints.items, {}, std.sort.asc(u32));
+
+        var groups = std.ArrayList(struct { start: u32, end: u32, glyph_id: u32 }).init(self.allocator);
+        defer groups.deinit();
+
+        if (codepoints.items.len > 0) {
+            var current_start = codepoints.items[0];
+            var current_end = current_start;
+            var start_glyph_id = codepoint_to_glyph.get(current_start).?;
+
+            for (codepoints.items[1..]) |cp| {
+                const glyph_id = codepoint_to_glyph.get(cp).?;
+
+                if (cp == current_end + 1 and glyph_id == start_glyph_id + (current_end - current_start + 1)) {
+                    current_end = cp;
+                } else {
+                    try groups.append(.{ .start = current_start, .end = current_end, .glyph_id = start_glyph_id });
+                    current_start = cp;
+                    current_end = cp;
+                    start_glyph_id = glyph_id;
+                }
+            }
+            try groups.append(.{ .start = current_start, .end = current_end, .glyph_id = start_glyph_id });
+        }
+
+        const length: u32 = 16 + @as(u32, @intCast(groups.items.len)) * 12;
+
+        try self.main_buffer.write(u16, 12, .big);
+        try self.main_buffer.write(u16, 0, .big);
+        try self.main_buffer.write(u32, length, .big);
+        try self.main_buffer.write(u32, 0, .big);
+        try self.main_buffer.write(u32, @intCast(groups.items.len), .big);
+
+        for (groups.items) |group| {
+            try self.main_buffer.write(u32, group.start, .big);
+            try self.main_buffer.write(u32, group.end, .big);
+            try self.main_buffer.write(u32, group.glyph_id, .big);
+        }
+    }
     fn build_hmtx_table(self: *Self, glyph_ids: []u16) !void {
         const start_offset: u32 = @intCast(self.main_buffer.len());
         const hmtx_table = self.t.parser.parsed_tables.hmtx.?;
@@ -1029,10 +1424,38 @@ const Subsetter = struct {
 
     fn build_post_table(self: *Self, glyph_ids: []u16) !void {
         std.debug.assert(glyph_ids.len >= 1);
+        var post_table = self.t.parser.parsed_tables.post.?;
+        const post = post_table.cast(table.Post);
         const start_offset: u32 = @intCast(self.main_buffer.len());
 
-        const table_data = self.get_default_binary_data(.post, null);
+        const table_data = self.get_default_binary_data(.post, 32);
+
         try self.main_buffer.write_bytes(table_data);
+
+        if (post.v2_data) |_| {
+            try self.main_buffer.write(u16, @intCast(glyph_ids.len), .big);
+            var has_custom_names = false;
+            for (glyph_ids) |gid| {
+                if (post.get_glyph_index(gid)) |glyph_index| {
+                    try self.main_buffer.write(u16, glyph_index, .big);
+                    if (glyph_index >= 258) {
+                        has_custom_names = true;
+                    }
+                }
+            }
+            if (has_custom_names) {
+                for (glyph_ids) |gid| {
+                    if (post.get_glyph_index(gid)) |glyph_index| {
+                        if (glyph_index >= 258) {
+                            if (post.get_glyph_name(gid)) |glyph_name| {
+                                try self.main_buffer.write_u8(@intCast(glyph_name.len));
+                                try self.main_buffer.write_bytes(glyph_name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         try self.pad_to_alignment();
 
@@ -1099,7 +1522,8 @@ const Subsetter = struct {
         try self.main_buffer.write(i16, x_max_extent, .big);
 
         if (table_data.len > 18) {
-            try self.main_buffer.write_bytes(table_data[18..]);
+            try self.main_buffer.write_bytes(table_data[18 .. table_data.len - 2]);
+            try self.main_buffer.write(u16, @intCast(glyph_ids.len), .big);
         }
         try self.pad_to_alignment();
 
@@ -1118,25 +1542,23 @@ const Subsetter = struct {
 test "ttf.zig" {
     const fs = std.fs;
     const allocator = std.testing.allocator;
-    const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "Caveat-VariableFont_wght.ttf" }) catch unreachable;
+    // LXGWBright-Light.ttf
+    // Caveat-VariableFont_wght.ttf
+    const font_file_path = fs.path.join(allocator, &.{ "./", "fonts", "LXGWBright-Light.ttf" }) catch unreachable;
     defer allocator.free(font_file_path);
     const file_content = try fs.cwd().readFileAlloc(allocator, font_file_path, std.math.maxInt(usize));
     defer allocator.free(file_content);
     var font = try ttf.init(allocator, file_content);
     defer font.deinit();
     var subbsetter = try font.subsetter();
-    const input_text = &[_]u8{ 0xC5, 0x84 };
+    // const input_text = &[_]u8{ 0xC5, 0x84 };
+    const input_text = "绪方理奈";
     std.debug.print("{s}\n", .{input_text});
     const result = try subbsetter.build_subset(BuildSubsetterOptions{ .input_text = input_text });
     defer allocator.free(result);
 
-    // std.debug.print("{any}\n", .{result.len});
     try std.fs.cwd().writeFile(std.fs.Dir.WriteFileOptions{
         .sub_path = "./output.ttf",
         .data = result,
     });
-    // var reader = try font.reader();
-    // const code_point: u32 = 'a';
-    // const e = try reader.get_glyph_info(code_point);
-    // std.debug.print("glyph: {any}\n", .{e});
 }
